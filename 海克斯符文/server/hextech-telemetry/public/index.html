@@ -208,6 +208,8 @@
     const fmtPct = (value) => `${Number(value || 0).toFixed(1)}%`;
     const top = (rows, limit = 80) => Array.isArray(rows) ? rows.slice(0, limit) : [];
     const displayLabel = (row) => row && row.name && row.name !== row.id ? `${row.name} (${row.id})` : (row?.id || "");
+    let renderRequestId = 0;
+    let versionFilterTouched = false;
 
     function text(value) {
       return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
@@ -363,12 +365,40 @@
     }
 
     async function loadAndRender(version) {
+      const requestId = ++renderRequestId;
+      document.getElementById("updated").textContent = "正在读取数据...";
       const summary = await fetchJson(summaryUrl(version));
-      renderSummary(summary);
+      if (requestId === renderRequestId) {
+        renderSummary(summary);
+      }
       return summary;
     }
 
+    async function renderSelectedVersion(version, cachedSummary = null) {
+      const requestId = ++renderRequestId;
+      setQueryVersion(version);
+      try {
+        document.getElementById("updated").textContent = "正在读取数据...";
+        const summary = cachedSummary || await fetchJson(summaryUrl(version));
+        if (requestId === renderRequestId) {
+          renderSummary(summary);
+        }
+      } catch (error) {
+        if (requestId === renderRequestId) {
+          document.getElementById("updated").textContent = `读取失败：${error}`;
+        }
+      }
+    }
+
+    function bindVersionFilter() {
+      document.getElementById("versionFilter").addEventListener("change", (event) => {
+        versionFilterTouched = true;
+        renderSelectedVersion(event.target.value);
+      });
+    }
+
     async function init() {
+      bindVersionFilter();
       try {
         const [latestInfo, allSummary] = await Promise.all([
           fetchJson(apiPath("/api/hextech-runes/latest-version")).catch(() => ({})),
@@ -376,21 +406,14 @@
         ]);
         const latestVersion = latestInfo.latestVersion || null;
         const queryVersion = getQueryVersion();
-        const selectedVersion = chooseInitialVersion(queryVersion, latestVersion, allSummary);
+        const selectedVersion = versionFilterTouched
+          ? document.getElementById("versionFilter").value
+          : chooseInitialVersion(queryVersion, latestVersion, allSummary);
         populateVersionFilter(allSummary, selectedVersion, latestVersion);
         const initialVersion = document.getElementById("versionFilter").value;
-        setQueryVersion(initialVersion);
-        if (initialVersion === "all") {
-          renderSummary(allSummary);
-        } else {
-          await loadAndRender(initialVersion);
+        if (!versionFilterTouched) {
+          await renderSelectedVersion(initialVersion, initialVersion === "all" ? allSummary : null);
         }
-
-        document.getElementById("versionFilter").addEventListener("change", async (event) => {
-          const nextVersion = event.target.value;
-          setQueryVersion(nextVersion);
-          await loadAndRender(nextVersion);
-        });
       } catch (error) {
         document.getElementById("updated").textContent = `读取失败：${error}`;
       }
