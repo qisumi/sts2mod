@@ -71,6 +71,7 @@ function sendJson(res, status, value) {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
+    "access-control-allow-origin": "*",
     "content-length": Buffer.byteLength(body)
   });
   res.end(body);
@@ -767,6 +768,35 @@ function fmtPct(value) {
   return `${Number(value || 0).toFixed(1)}%`;
 }
 
+function compareVersionsDesc(a, b) {
+  return String(b).localeCompare(String(a), undefined, { numeric: true, sensitivity: "base" });
+}
+
+function getVersionIdsForDisplay(summary, latestVersion = null) {
+  const versions = new Set();
+  for (const row of summary?.availableVersions || []) {
+    if (row?.id) {
+      versions.add(row.id);
+    }
+  }
+  const normalizedLatestVersion = normalizeVersionFilter(latestVersion);
+  if (normalizedLatestVersion) {
+    versions.add(normalizedLatestVersion);
+  }
+  return [...versions].sort(compareVersionsDesc);
+}
+
+function getDefaultDisplayVersion() {
+  const latestVersion = normalizeVersionFilter(readLatestVersionInfo().latestVersion);
+  const summary = getSummaryForDisplay(null);
+  const availableVersions = new Set((summary.availableVersions || []).map((row) => row.id).filter(Boolean));
+  if (latestVersion && availableVersions.has(latestVersion)) {
+    return latestVersion;
+  }
+  const newestAvailableVersion = [...availableVersions].sort(compareVersionsDesc)[0];
+  return newestAvailableVersion || latestVersion || null;
+}
+
 function buildFilterNote(summary) {
   const versionText = summary.versionFilter === "all" ? "全部版本" : `版本 ${summary.versionFilter}`;
   return `当前统计口径：${versionText}，排除 runTime < ${summary.filters.minRunTimeForDefaultStats} 秒的历史局；0.5.0 起客户端会直接跳过短局上传。`;
@@ -785,13 +815,31 @@ function renderTable(headers, rows) {
   ].join("");
 }
 
+function renderVersionOptions(summary, selectedVersion, latestVersion) {
+  const versionCounts = new Map((summary.availableVersions || []).map((row) => [row.id, row.count]));
+  const normalizedSelectedVersion = selectedVersion || "all";
+  const options = [
+    `<option value="all"${normalizedSelectedVersion === "all" ? " selected" : ""}>全部版本</option>`
+  ];
+  for (const version of getVersionIdsForDisplay(summary, latestVersion)) {
+    const count = versionCounts.get(version);
+    const suffix = Number.isFinite(count) ? `（${count}局）` : "（暂无样本）";
+    options.push(
+      `<option value="${escapeHtml(version)}"${normalizedSelectedVersion === version ? " selected" : ""}>${escapeHtml(`${version}${suffix}`)}</option>`
+    );
+  }
+  return options.join("");
+}
+
 function renderIndexHtml(versionFilter = null) {
   const summary = getSummaryForDisplay(versionFilter);
+  const latestVersion = normalizeVersionFilter(readLatestVersionInfo().latestVersion);
   const indexPath = path.join(PUBLIC_DIR, "index.html");
   let html = fs.readFileSync(indexPath, "utf8");
   const note = buildFilterNote(summary);
   const replacements = [
     [/正在读取数据\.\.\./, `更新时间：${escapeHtml(summary.generatedAtUtc)}`],
+    [/<select id="versionFilter">\s*<option value="all">全部版本<\/option>\s*<\/select>/, `<select id="versionFilter">${renderVersionOptions(summary, summary.versionFilter, latestVersion)}</select>`],
     [/<b id="eligibleRuns">0<\/b>/, `<b id="eligibleRuns">${summary.runCount}</b>`],
     [/<b id="rawRuns">0<\/b>/, `<b id="rawRuns">${summary.raw.uniqueRuns}</b>`],
     [/<b id="shortRuns">0<\/b>/, `<b id="shortRuns">${summary.excludedShortRuns}</b>`],
@@ -821,7 +869,7 @@ function serveStatic(req, res) {
   if (pathname === "/index.html") {
     const versionFilter = url.searchParams.has("version")
       ? normalizeVersionFilter(url.searchParams.get("version"))
-      : normalizeVersionFilter(readLatestVersionInfo().latestVersion);
+      : getDefaultDisplayVersion();
     return sendHtml(res, 200, renderIndexHtml(versionFilter));
   }
 

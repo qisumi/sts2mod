@@ -204,6 +204,7 @@
     </section>
   </main>
   <script>
+    const API_BASE = window.location.protocol === "file:" ? "http://39.96.216.77" : "";
     const fmtPct = (value) => `${Number(value || 0).toFixed(1)}%`;
     const top = (rows, limit = 80) => Array.isArray(rows) ? rows.slice(0, limit) : [];
     const displayLabel = (row) => row && row.name && row.name !== row.id ? `${row.name} (${row.id})` : (row?.id || "");
@@ -216,6 +217,14 @@
         '"': "&quot;",
         "'": "&#39;"
       }[ch]));
+    }
+
+    function apiPath(path) {
+      return `${API_BASE}${path}`;
+    }
+
+    function compareVersionsDesc(a, b) {
+      return String(b).localeCompare(String(a), undefined, { numeric: true, sensitivity: "base" });
     }
 
     function renderTable(node, headers, rows) {
@@ -234,8 +243,8 @@
 
     function summaryUrl(version) {
       return version && version !== "all"
-        ? `/api/hextech-runes/summary?version=${encodeURIComponent(version)}`
-        : "/api/hextech-runes/summary";
+        ? apiPath(`/api/hextech-runes/summary?version=${encodeURIComponent(version)}`)
+        : apiPath("/api/hextech-runes/summary");
     }
 
     function getQueryVersion() {
@@ -270,6 +279,7 @@
     function populateVersionFilter(summary, selectedVersion, latestVersion) {
       const select = document.getElementById("versionFilter");
       const versionRows = Array.isArray(summary.availableVersions) ? summary.availableVersions : summary.tables.versions;
+      const versionCounts = new Map(versionRows.map((row) => [row.id, row.count]));
       const versions = new Set(versionRows.map((row) => row.id).filter(Boolean));
       if (latestVersion) {
         versions.add(latestVersion);
@@ -277,10 +287,26 @@
       select.innerHTML = [
         `<option value="all">全部版本</option>`,
         ...[...versions]
-          .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: "base" }))
-          .map((version) => `<option value="${text(version)}">${text(version)}</option>`)
+          .sort(compareVersionsDesc)
+          .map((version) => {
+            const count = versionCounts.get(version);
+            const suffix = Number.isFinite(count) ? `（${count}局）` : "（暂无样本）";
+            return `<option value="${text(version)}">${text(`${version}${suffix}`)}</option>`;
+          })
       ].join("");
       select.value = versions.has(selectedVersion) || selectedVersion === "all" ? selectedVersion : "all";
+    }
+
+    function chooseInitialVersion(queryVersion, latestVersion, allSummary) {
+      if (queryVersion) {
+        return queryVersion;
+      }
+      const versionRows = Array.isArray(allSummary.availableVersions) ? allSummary.availableVersions : allSummary.tables.versions;
+      const availableVersions = new Set(versionRows.map((row) => row.id).filter(Boolean));
+      if (latestVersion && availableVersions.has(latestVersion)) {
+        return latestVersion;
+      }
+      return [...availableVersions].sort(compareVersionsDesc)[0] || latestVersion || "all";
     }
 
     function renderSummary(summary) {
@@ -345,12 +371,12 @@
     async function init() {
       try {
         const [latestInfo, allSummary] = await Promise.all([
-          fetchJson("/api/hextech-runes/latest-version").catch(() => ({})),
-          fetchJson("/api/hextech-runes/summary")
+          fetchJson(apiPath("/api/hextech-runes/latest-version")).catch(() => ({})),
+          fetchJson(summaryUrl("all"))
         ]);
         const latestVersion = latestInfo.latestVersion || null;
         const queryVersion = getQueryVersion();
-        const selectedVersion = queryVersion || latestVersion || "all";
+        const selectedVersion = chooseInitialVersion(queryVersion, latestVersion, allSummary);
         populateVersionFilter(allSummary, selectedVersion, latestVersion);
         const initialVersion = document.getElementById("versionFilter").value;
         setQueryVersion(initialVersion);
