@@ -116,7 +116,7 @@ function readLatestVersionInfo() {
   return {
     modId: "HextechRunes",
     name: "海克斯大乱斗",
-    latestVersion: "0.4.2"
+    latestVersion: "0.5.0"
   };
 }
 
@@ -232,6 +232,22 @@ function getRun(record) {
   return record?.payload?.run || {};
 }
 
+function getModVersion(record) {
+  const version = record?.payload?.modVersion;
+  return typeof version === "string" && version.trim().length > 0 ? version : "(unknown)";
+}
+
+function normalizeVersionFilter(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "all") {
+    return null;
+  }
+  return trimmed;
+}
+
 function getRunTime(record) {
   const runTime = Number(getRun(record).runTime);
   return Number.isFinite(runTime) ? runTime : 0;
@@ -298,20 +314,32 @@ function addSimpleCounter(map, key) {
   map[key] = (map[key] || 0) + 1;
 }
 
-function buildDerivedData() {
+function buildDerivedData(options = {}) {
+  const versionFilter = normalizeVersionFilter(options.version);
   const recordSet = readRecordSet();
   const records = recordSet.records;
-  const eligibleRecords = records.filter(isDefaultEligible);
-  const excludedShortRuns = records.length - eligibleRecords.length;
+  const versionRecords = versionFilter ? records.filter((record) => getModVersion(record) === versionFilter) : records;
+  const eligibleRecords = versionRecords.filter(isDefaultEligible);
+  const allEligibleRecords = records.filter(isDefaultEligible);
+  const excludedShortRuns = versionRecords.length - eligibleRecords.length;
+  const availableVersionCounts = {};
+  for (const record of allEligibleRecords) {
+    addSimpleCounter(availableVersionCounts, getModVersion(record));
+  }
+
   const summary = {
     generatedAtUtc: new Date().toISOString(),
     filters: {
       minRunTimeForDefaultStats: MIN_RUN_TIME_FOR_DEFAULT_STATS,
-      defaultExcludes: ["short_run"]
+      defaultExcludes: ["short_run"],
+      version: versionFilter || "all"
     },
+    versionFilter: versionFilter || "all",
+    availableVersions: buildCountRows(availableVersionCounts),
     raw: {
       physicalLines: recordSet.physicalLines,
-      uniqueRuns: records.length,
+      uniqueRuns: versionRecords.length,
+      totalUniqueRuns: records.length,
       duplicateLines: recordSet.duplicateLines,
       malformedLines: recordSet.malformedLines
     },
@@ -340,7 +368,7 @@ function buildDerivedData() {
   const runeChoiceRows = [];
   const monsterHexRows = [];
 
-  for (const record of records) {
+  for (const record of versionRecords) {
     const payload = record.payload || {};
     const run = payload.run || {};
     const isVictory = run.isVictory === true;
@@ -372,7 +400,7 @@ function buildDerivedData() {
       if (isVictory) {
         summary.winCount += 1;
       }
-      addSimpleCounter(summary.versions, payload.modVersion || "(unknown)");
+      addSimpleCounter(summary.versions, getModVersion(record));
       addSimpleCounter(summary.netModes, run.netMode || "(unknown)");
     }
 
@@ -664,7 +692,12 @@ function rebuildDerivedTablesNow() {
   }
 }
 
-function getSummaryForDisplay() {
+function getSummaryForDisplay(versionFilter = null) {
+  const normalizedVersionFilter = normalizeVersionFilter(versionFilter);
+  if (normalizedVersionFilter) {
+    return buildDerivedData({ version: normalizedVersionFilter }).summary;
+  }
+
   const summary = readDerivedSummary();
   if (summary && allDerivedFilesExist()) {
     if (derivedState.dirty || !derivedFilesAreCurrent()) {
@@ -731,9 +764,17 @@ function fmtPct(value) {
   return `${Number(value || 0).toFixed(1)}%`;
 }
 
+function buildFilterNote(summary) {
+  const versionText = summary.versionFilter === "all" ? "全部版本" : `版本 ${summary.versionFilter}`;
+  return `当前统计口径：${versionText}，排除 runTime < ${summary.filters.minRunTimeForDefaultStats} 秒的历史局；0.5.0 起客户端会直接跳过短局上传。`;
+}
+
 function renderTable(headers, rows) {
   if (!rows.length) {
-    return '<div class="empty">暂无可显示数据</div>';
+    return [
+      `<thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>`,
+      `<tbody><tr><td colspan="${headers.length}">暂无可显示数据</td></tr></tbody>`
+    ].join("");
   }
   return [
     `<thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>`,
@@ -741,11 +782,11 @@ function renderTable(headers, rows) {
   ].join("");
 }
 
-function renderIndexHtml() {
-  const summary = getSummaryForDisplay();
+function renderIndexHtml(versionFilter = null) {
+  const summary = getSummaryForDisplay(versionFilter);
   const indexPath = path.join(PUBLIC_DIR, "index.html");
   let html = fs.readFileSync(indexPath, "utf8");
-  const note = `默认统计口径：排除 runTime < ${summary.filters.minRunTimeForDefaultStats} 秒的历史局；0.5.0 起客户端会直接跳过短局上传。`;
+  const note = buildFilterNote(summary);
   const replacements = [
     [/正在读取数据\.\.\./, `更新时间：${escapeHtml(summary.generatedAtUtc)}`],
     [/<b id="eligibleRuns">0<\/b>/, `<b id="eligibleRuns">${summary.runCount}</b>`],
@@ -775,7 +816,10 @@ function serveStatic(req, res) {
   }
 
   if (pathname === "/index.html") {
-    return sendHtml(res, 200, renderIndexHtml());
+    const versionFilter = url.searchParams.has("version")
+      ? normalizeVersionFilter(url.searchParams.get("version"))
+      : normalizeVersionFilter(readLatestVersionInfo().latestVersion);
+    return sendHtml(res, 200, renderIndexHtml(versionFilter));
   }
 
   const filePath = path.normalize(path.join(PUBLIC_DIR, pathname));
@@ -810,7 +854,7 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { ok: true, service: "hextech-runes-telemetry", runs: knownRunIds.size });
   }
   if (req.method === "GET" && url.pathname === "/api/hextech-runes/summary") {
-    return sendJson(res, 200, getSummaryForDisplay());
+    return sendJson(res, 200, getSummaryForDisplay(url.searchParams.get("version")));
   }
   if (req.method === "GET" && url.pathname === "/api/hextech-runes/latest-version") {
     return sendJson(res, 200, readLatestVersionInfo());

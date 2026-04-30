@@ -67,6 +67,27 @@
       text-decoration: none;
       font-size: 14px;
     }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin: 14px 0 6px;
+    }
+    .controls label {
+      font-size: 14px;
+      font-weight: 650;
+    }
+    .controls select {
+      min-width: 180px;
+      border: 1px solid #c8d0cc;
+      border-radius: 6px;
+      padding: 7px 10px;
+      background: #ffffff;
+      color: inherit;
+      font: inherit;
+      font-size: 14px;
+    }
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -115,7 +136,7 @@
       .muted, .empty {
         color: #9aa8a5;
       }
-      .stat, table, .links a, .empty {
+      .stat, table, .links a, .empty, .controls select {
         background: #182023;
         border-color: #2b3637;
       }
@@ -132,6 +153,12 @@
   <main>
     <h1>海克斯符文统计</h1>
     <div class="muted" id="updated">正在读取数据...</div>
+    <div class="controls">
+      <label for="versionFilter">统计版本</label>
+      <select id="versionFilter">
+        <option value="all">全部版本</option>
+      </select>
+    </div>
     <div class="stats">
       <div class="stat"><b id="eligibleRuns">0</b>纳入胜率的局数</div>
       <div class="stat"><b id="rawRuns">0</b>原始唯一局数</div>
@@ -193,7 +220,10 @@
 
     function renderTable(node, headers, rows) {
       if (!rows.length) {
-        node.outerHTML = `<div class="empty">暂无可显示数据</div>`;
+        node.innerHTML = [
+          `<thead><tr>${headers.map((h) => `<th>${text(h)}</th>`).join("")}</tr></thead>`,
+          `<tbody><tr><td colspan="${headers.length}">暂无可显示数据</td></tr></tbody>`
+        ].join("");
         return;
       }
       node.innerHTML = [
@@ -202,64 +232,145 @@
       ].join("");
     }
 
-    fetch("/api/hextech-runes/summary")
-      .then((res) => res.json())
-      .then((summary) => {
-        document.getElementById("updated").textContent = `更新时间：${summary.generatedAtUtc}`;
-        document.getElementById("eligibleRuns").textContent = summary.runCount;
-        document.getElementById("rawRuns").textContent = summary.raw.uniqueRuns;
-        document.getElementById("shortRuns").textContent = summary.excludedShortRuns;
-        document.getElementById("wins").textContent = summary.winCount;
-        document.getElementById("winRate").textContent = fmtPct(summary.winRate);
-        document.getElementById("filterNote").textContent =
-          `默认统计口径：排除 runTime < ${summary.filters.minRunTimeForDefaultStats} 秒的历史局；0.5.0 起客户端会直接跳过短局上传。`;
+    function summaryUrl(version) {
+      return version && version !== "all"
+        ? `/api/hextech-runes/summary?version=${encodeURIComponent(version)}`
+        : "/api/hextech-runes/summary";
+    }
 
-        renderTable(
-          document.getElementById("versions"),
-          ["版本", "局数"],
-          top(summary.tables.versions, 20).map((row) => [displayLabel(row), row.count])
-        );
-        renderTable(
-          document.getElementById("netModes"),
-          ["模式", "局数"],
-          top(summary.tables.netModes, 20).map((row) => [displayLabel(row), row.count])
-        );
-        renderTable(
-          document.getElementById("characters"),
-          ["角色", "玩家样本"],
-          top(summary.tables.characters, 20).map((row) => [displayLabel(row), row.count])
-        );
-        renderTable(
-          document.getElementById("choices"),
-          ["海克斯", "出现", "选择", "选择率", "选择后胜率"],
-          top(summary.tables.playerRuneChoices).map((row) => [
-            displayLabel(row),
-            row.offered,
-            row.selected,
-            fmtPct(row.pickRate),
-            fmtPct(row.selectedWinRate)
-          ])
-        );
-        renderTable(
-          document.getElementById("playerRunes"),
-          ["海克斯", "持有局数", "胜利", "玩家胜率"],
-          top(summary.tables.playerRuneRuns).map((row) => [displayLabel(row), row.runs, row.wins, fmtPct(row.winRate)])
-        );
-        renderTable(
-          document.getElementById("monsterHexes"),
-          ["敌方海克斯", "出现局数", "敌方胜利", "敌方胜率", "玩家胜率"],
-          top(summary.tables.monsterHexRuns).map((row) => [
-            displayLabel(row),
-            row.runs,
-            row.monsterWins,
-            fmtPct(row.monsterWinRate),
-            fmtPct(row.playerWinRate)
-          ])
-        );
-      })
-      .catch((error) => {
+    function getQueryVersion() {
+      const value = new URLSearchParams(window.location.search).get("version");
+      return value && value.trim() ? value.trim() : null;
+    }
+
+    function setQueryVersion(version) {
+      const url = new URL(window.location.href);
+      if (version && version !== "all") {
+        url.searchParams.set("version", version);
+      } else {
+        url.searchParams.set("version", "all");
+      }
+      window.history.replaceState(null, "", url);
+    }
+
+    function buildFilterNote(summary) {
+      const version = summary.versionFilter || summary.filters?.version || "all";
+      const versionText = version === "all" ? "全部版本" : `版本 ${version}`;
+      return `当前统计口径：${versionText}，排除 runTime < ${summary.filters.minRunTimeForDefaultStats} 秒的历史局；0.5.0 起客户端会直接跳过短局上传。`;
+    }
+
+    async function fetchJson(url) {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) {
+        throw new Error(`${res.status} ${res.statusText}`);
+      }
+      return res.json();
+    }
+
+    function populateVersionFilter(summary, selectedVersion, latestVersion) {
+      const select = document.getElementById("versionFilter");
+      const versionRows = Array.isArray(summary.availableVersions) ? summary.availableVersions : summary.tables.versions;
+      const versions = new Set(versionRows.map((row) => row.id).filter(Boolean));
+      if (latestVersion) {
+        versions.add(latestVersion);
+      }
+      select.innerHTML = [
+        `<option value="all">全部版本</option>`,
+        ...[...versions]
+          .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: "base" }))
+          .map((version) => `<option value="${text(version)}">${text(version)}</option>`)
+      ].join("");
+      select.value = versions.has(selectedVersion) || selectedVersion === "all" ? selectedVersion : "all";
+    }
+
+    function renderSummary(summary) {
+      document.getElementById("updated").textContent = `更新时间：${summary.generatedAtUtc}`;
+      document.getElementById("eligibleRuns").textContent = summary.runCount;
+      document.getElementById("rawRuns").textContent = summary.raw.uniqueRuns;
+      document.getElementById("shortRuns").textContent = summary.excludedShortRuns;
+      document.getElementById("wins").textContent = summary.winCount;
+      document.getElementById("winRate").textContent = fmtPct(summary.winRate);
+      document.getElementById("filterNote").textContent = buildFilterNote(summary);
+
+      renderTable(
+        document.getElementById("versions"),
+        ["版本", "局数"],
+        top(summary.tables.versions, 20).map((row) => [displayLabel(row), row.count])
+      );
+      renderTable(
+        document.getElementById("netModes"),
+        ["模式", "局数"],
+        top(summary.tables.netModes, 20).map((row) => [displayLabel(row), row.count])
+      );
+      renderTable(
+        document.getElementById("characters"),
+        ["角色", "玩家样本"],
+        top(summary.tables.characters, 20).map((row) => [displayLabel(row), row.count])
+      );
+      renderTable(
+        document.getElementById("choices"),
+        ["海克斯", "出现", "选择", "选择率", "选择后胜率"],
+        top(summary.tables.playerRuneChoices).map((row) => [
+          displayLabel(row),
+          row.offered,
+          row.selected,
+          fmtPct(row.pickRate),
+          fmtPct(row.selectedWinRate)
+        ])
+      );
+      renderTable(
+        document.getElementById("playerRunes"),
+        ["海克斯", "持有局数", "胜利", "玩家胜率"],
+        top(summary.tables.playerRuneRuns).map((row) => [displayLabel(row), row.runs, row.wins, fmtPct(row.winRate)])
+      );
+      renderTable(
+        document.getElementById("monsterHexes"),
+        ["敌方海克斯", "出现局数", "敌方胜利", "敌方胜率", "玩家胜率"],
+        top(summary.tables.monsterHexRuns).map((row) => [
+          displayLabel(row),
+          row.runs,
+          row.monsterWins,
+          fmtPct(row.monsterWinRate),
+          fmtPct(row.playerWinRate)
+        ])
+      );
+    }
+
+    async function loadAndRender(version) {
+      const summary = await fetchJson(summaryUrl(version));
+      renderSummary(summary);
+      return summary;
+    }
+
+    async function init() {
+      try {
+        const [latestInfo, allSummary] = await Promise.all([
+          fetchJson("/api/hextech-runes/latest-version").catch(() => ({})),
+          fetchJson("/api/hextech-runes/summary")
+        ]);
+        const latestVersion = latestInfo.latestVersion || null;
+        const queryVersion = getQueryVersion();
+        const selectedVersion = queryVersion || latestVersion || "all";
+        populateVersionFilter(allSummary, selectedVersion, latestVersion);
+        const initialVersion = document.getElementById("versionFilter").value;
+        setQueryVersion(initialVersion);
+        if (initialVersion === "all") {
+          renderSummary(allSummary);
+        } else {
+          await loadAndRender(initialVersion);
+        }
+
+        document.getElementById("versionFilter").addEventListener("change", async (event) => {
+          const nextVersion = event.target.value;
+          setQueryVersion(nextVersion);
+          await loadAndRender(nextVersion);
+        });
+      } catch (error) {
         document.getElementById("updated").textContent = `读取失败：${error}`;
-      });
+      }
+    }
+
+    init();
   </script>
 </body>
 </html>
