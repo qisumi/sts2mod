@@ -31,13 +31,15 @@ internal sealed partial class HextechMayhemCombatTrackingState
 	public readonly HashSet<uint> MadScientistApplied = new();
 	public readonly HashSet<uint> UnmovableMountainApplied = new();
 	public readonly HashSet<uint> GoldenSpatulaApplied = new();
+	public readonly HashSet<uint> DoormakerRealStartApplied = new();
+	public readonly Dictionary<uint, int> TestSubjectPhaseStartApplied = new();
 	public readonly Dictionary<uint, int> TankEngineStacks = new();
 	public readonly Dictionary<uint, int> ShrinkEngineStacks = new();
 	public readonly Dictionary<uint, int> GetExcitedPending = new();
 	public readonly HashSet<uint> FeelTheBurnPending = new();
 	public readonly HashSet<uint> MountainSoulHasPreviousTurn = new();
 	public readonly HashSet<uint> MountainSoulDamagedSinceLastTurn = new();
-	public readonly Dictionary<ulong, int> PlayerAttackCardsPlayedThisCombat = new();
+	public readonly Dictionary<ulong, int> PlayerAttackCardsPlayedThisTurn = new();
 	public readonly Dictionary<ulong, int> PlayerCardsDrawnThisCombat = new();
 	public readonly HashSet<ulong> EightPennyGatePlayersTriggeredThisTurn = new();
 	[CombatTrackingTransient]
@@ -56,14 +58,22 @@ internal sealed partial class HextechMayhemCombatTrackingState
 
 	public void PreparePlayerSideTurnStart()
 	{
+		PlayerAttackCardsPlayedThisTurn.Clear();
 		BloodPactProcsThisTurn.Clear();
 		ClownCollegeProcsThisTurn.Clear();
+		EightPennyGatePlayersTriggeredThisTurn.Clear();
+	}
+
+	public void PreparePlayerSideTurnEnd()
+	{
+		PlayerAttackCardsPlayedThisTurn.Clear();
 		EightPennyGatePlayersTriggeredThisTurn.Clear();
 	}
 
 	public void PrepareEnemySideTurnStart()
 	{
 		EnemyProtectiveVeilTurnCounter++;
+		PlayerAttackCardsPlayedThisTurn.Clear();
 		SlapProcsThisTurn.Clear();
 		TormentorProcsThisTurn.Clear();
 		CourageProcsThisTurn.Clear();

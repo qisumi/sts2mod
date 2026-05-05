@@ -23,11 +23,19 @@ internal sealed partial class HextechMayhemModifier
             return;
         }
 
+        enemies = enemies
+            .Where(static enemy => !ShouldDeferInitialBossStartHexes(enemy))
+            .ToList();
+        if (enemies.Count == 0)
+        {
+            return;
+        }
+
         if (HasActiveMonsterHex(MonsterHexKind.StartupRoutine))
         {
             foreach (Creature enemy in enemies)
             {
-                await CreatureCmd.GainBlock(enemy, 15m, ValueProp.Unpowered, null);
+                await ApplyMonsterCombatStartHexesToEnemy(enemy, room, applyStartupRoutine: true, applyHailToTheKing: false);
             }
         }
 
@@ -39,11 +47,32 @@ internal sealed partial class HextechMayhemModifier
 
         foreach (Creature enemy in enemies)
         {
-            int sustain = Math.Max(1, (int)Math.Floor(enemy.MaxHp * 0.05m));
-            await HextechEnemyPowerScalingHooks.Apply<ArtifactPower>(enemy, 3m, enemy, null);
-            await HextechEnemyPowerScalingHooks.Apply<PlatingPower>(enemy, sustain, enemy, null);
-            await HextechEnemyPowerScalingHooks.Apply<RegenPower>(enemy, sustain, enemy, null);
+            await ApplyMonsterCombatStartHexesToEnemy(enemy, room, applyStartupRoutine: false, applyHailToTheKing: true);
         }
+    }
+
+    private async Task ApplyMonsterCombatStartHexesToEnemy(
+        Creature enemy,
+        CombatRoom room,
+        bool applyStartupRoutine = true,
+        bool applyHailToTheKing = true)
+    {
+        if (applyStartupRoutine && HasActiveMonsterHex(MonsterHexKind.StartupRoutine))
+        {
+            await CreatureCmd.GainBlock(enemy, 15m, ValueProp.Unpowered, null);
+        }
+
+        if (!applyHailToTheKing
+            || !HasActiveMonsterHex(MonsterHexKind.HailToTheKing)
+            || room.RoomType is not (RoomType.Elite or RoomType.Boss))
+        {
+            return;
+        }
+
+        int sustain = Math.Max(1, (int)Math.Floor(enemy.MaxHp * 0.05m));
+        await HextechEnemyPowerScalingHooks.Apply<ArtifactPower>(enemy, 3m, enemy, null);
+        await HextechEnemyPowerScalingHooks.Apply<PlatingPower>(enemy, sustain, enemy, null);
+        await HextechEnemyPowerScalingHooks.Apply<RegenPower>(enemy, sustain, enemy, null);
     }
 
     private async Task ApplyCombatStartPlayerDebuffHexes(CombatRoom room)

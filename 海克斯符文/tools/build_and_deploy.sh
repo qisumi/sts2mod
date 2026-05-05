@@ -17,6 +17,7 @@ REFS_103="$ROOT/versioned-dll-backups/0.103.2/game-refs"
 REFS_104="$ROOT/versioned-dll-backups/0.104.0/game-refs"
 GAME_RELEASE_INFO="$GAME_APP/Contents/Resources/release_info.json"
 DEFAULT_STS2_TARGET="0.103.2"
+HEXTECH_DEPLOY="${HEXTECH_DEPLOY:-1}"
 
 major_minor_version() {
   sed -E 's/^([0-9]+[.][0-9]+).*/\1/' <<< "$1"
@@ -64,18 +65,20 @@ case "$HEXTECH_STS2_TARGET" in
     ;;
 esac
 
-case "$HEXTECH_STS2_TARGET:$CURRENT_GAME_VERSION" in
-  0.103.2:0.103*|0.104.0:0.104*|*:)
-    ;;
-  *)
-    if [[ "${HEXTECH_ALLOW_VERSION_MISMATCH:-0}" != "1" ]]; then
-      print -u2 "Refusing to deploy $FILE_STEM built for STS2 $HEXTECH_STS2_TARGET into installed STS2 $CURRENT_GAME_VERSION."
-      print -u2 "Switch the installed game to the matching branch, or set HEXTECH_ALLOW_VERSION_MISMATCH=1 if you are intentionally packaging against a different installed version."
-      exit 1
-    fi
-    print -u2 "Warning: deploying STS2 $HEXTECH_STS2_TARGET build into installed STS2 $CURRENT_GAME_VERSION because HEXTECH_ALLOW_VERSION_MISMATCH=1."
-    ;;
-esac
+if [[ "$HEXTECH_DEPLOY" != "0" ]]; then
+  case "$HEXTECH_STS2_TARGET:$CURRENT_GAME_VERSION" in
+    0.103.2:0.103*|0.104.0:0.104*|*:)
+      ;;
+    *)
+      if [[ "${HEXTECH_ALLOW_VERSION_MISMATCH:-0}" != "1" ]]; then
+        print -u2 "Refusing to deploy $FILE_STEM built for STS2 $HEXTECH_STS2_TARGET into installed STS2 $CURRENT_GAME_VERSION."
+        print -u2 "Switch the installed game to the matching branch, set HEXTECH_DEPLOY=0 to package only, or set HEXTECH_ALLOW_VERSION_MISMATCH=1 if you are intentionally deploying against a different installed version."
+        exit 1
+      fi
+      print -u2 "Warning: deploying STS2 $HEXTECH_STS2_TARGET build into installed STS2 $CURRENT_GAME_VERSION because HEXTECH_ALLOW_VERSION_MISMATCH=1."
+      ;;
+  esac
+fi
 
 for ref_dll in sts2.dll GodotSharp.dll 0Harmony.dll; do
   if [[ ! -f "$TARGET_REFS/$ref_dll" ]]; then
@@ -91,9 +94,11 @@ echo "Building $FILE_STEM for STS2 $HEXTECH_STS2_TARGET using $TARGET_REFS"
   -p:GameDataDir="$TARGET_REFS"
 
 mkdir -p "$ROOT/dist"
-rm -rf "$MOD_DIR"
-mkdir -p "$MOD_DIR"
 mkdir -p "$IMPORT_PROJECT/$FILE_STEM"
+if [[ "$HEXTECH_DEPLOY" != "0" ]]; then
+  rm -rf "$MOD_DIR"
+  mkdir -p "$MOD_DIR"
+fi
 
 cp "$ROOT/tools/project.godot" "$IMPORT_PROJECT/project.godot"
 rsync -a --exclude "$FILE_STEM.json" "$ROOT/assets/" "$IMPORT_PROJECT/$FILE_STEM/"
@@ -104,7 +109,9 @@ clean_macos_metadata "$IMPORT_PROJECT"
   --import
 
 cp "$MANIFEST_SRC" "$ROOT/dist/$FILE_STEM.json"
-cp "$ROOT/dist/$FILE_STEM.json" "$MOD_DIR/$FILE_STEM.json"
+if [[ "$HEXTECH_DEPLOY" != "0" ]]; then
+  cp "$ROOT/dist/$FILE_STEM.json" "$MOD_DIR/$FILE_STEM.json"
+fi
 
 "$GAME_BIN" --headless \
   --path "$ROOT/tools" \
@@ -113,7 +120,9 @@ cp "$ROOT/dist/$FILE_STEM.json" "$MOD_DIR/$FILE_STEM.json"
   "$ROOT/dist/$FILE_STEM.pck" \
   "$IMPORT_PROJECT"
 
-cp "$ROOT/dist/$FILE_STEM.pck" "$MOD_DIR/$FILE_STEM.pck"
+if [[ "$HEXTECH_DEPLOY" != "0" ]]; then
+  cp "$ROOT/dist/$FILE_STEM.pck" "$MOD_DIR/$FILE_STEM.pck"
+fi
 
 for dll in "$BUILD_OUT"/*.dll; do
   base_name="$(basename "$dll")"
@@ -124,10 +133,18 @@ for dll in "$BUILD_OUT"/*.dll; do
   esac
 
   cp "$dll" "$ROOT/dist/$base_name"
-  cp "$dll" "$MOD_DIR/$base_name"
+  if [[ "$HEXTECH_DEPLOY" != "0" ]]; then
+    cp "$dll" "$MOD_DIR/$base_name"
+  fi
 done
 
 clean_macos_metadata "$ROOT/dist"
-clean_macos_metadata "$MOD_DIR"
+if [[ "$HEXTECH_DEPLOY" != "0" ]]; then
+  clean_macos_metadata "$MOD_DIR"
+fi
 
-echo "Deployed to $MOD_DIR"
+if [[ "$HEXTECH_DEPLOY" != "0" ]]; then
+  echo "Deployed to $MOD_DIR"
+else
+  echo "Built package artifacts in $ROOT/dist without deploying to the installed game."
+fi

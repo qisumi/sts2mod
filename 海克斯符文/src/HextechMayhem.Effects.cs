@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using MegaCrit.Sts2.Core.Combat;
-using MegaCrit.Sts2.Core.Combat.History.Entries;
 using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
@@ -221,23 +220,62 @@ internal sealed partial class HextechMayhemModifier
         return true;
     }
 
-    private static bool TryMarkPersistentHexApplied(HashSet<uint> appliedSet, Creature creature)
-    {
-        return creature.CombatId != null && appliedSet.Add(creature.CombatId.Value);
-    }
+	private static bool TryMarkPersistentHexApplied(HashSet<uint> appliedSet, Creature creature, bool forceReapply = false)
+	{
+		if (creature.CombatId == null)
+		{
+			return false;
+		}
 
-    private void TrackPlayerAttackCardPlayed(CardPlay cardPlay)
+		bool firstApplication = appliedSet.Add(creature.CombatId.Value);
+		return forceReapply || firstApplication;
+	}
+
+    private bool TrackPlayerAttackCardPlayedThisTurn(CardPlay cardPlay)
     {
         if (!cardPlay.IsFirstInSeries
             || cardPlay.IsAutoPlay
             || cardPlay.Card.Type != CardType.Attack
             || cardPlay.Card.Owner?.Creature.Side != CombatSide.Player)
         {
-            return;
+            return false;
         }
 
         ulong playerId = cardPlay.Card.Owner.NetId;
-        _combatTracking.PlayerAttackCardsPlayedThisCombat[playerId] = _combatTracking.PlayerAttackCardsPlayedThisCombat.GetValueOrDefault(playerId, 0) + 1;
+        _combatTracking.PlayerAttackCardsPlayedThisTurn[playerId] = _combatTracking.PlayerAttackCardsPlayedThisTurn.GetValueOrDefault(playerId, 0) + 1;
+        return true;
+    }
+
+    private bool HasEnemyAttackCostDoublingHex()
+    {
+        return HasActiveMonsterHex(MonsterHexKind.LightEmUp)
+            || HasActiveMonsterHex(MonsterHexKind.TwiceThrice);
+    }
+
+    private void RefreshPlayerAttackCostDoublingPreviews(IEnumerable<Creature> playerCreatures)
+    {
+        if (!HasEnemyAttackCostDoublingHex())
+        {
+            return;
+        }
+
+        foreach (Creature playerCreature in playerCreatures)
+        {
+            Player? player = playerCreature.Player;
+            if (player == null
+                || playerCreature.CombatState?.RunState != RunState)
+            {
+                continue;
+            }
+
+            foreach (CardModel card in PileType.Hand.GetPile(player).Cards)
+            {
+                if (card.Type == CardType.Attack && !card.EnergyCost.CostsX)
+                {
+                    card.InvokeEnergyCostChanged();
+                }
+            }
+        }
     }
 
     private bool TryConsumeEnemyEightPennyGate(CardModel card, bool isAutoPlay)
@@ -245,6 +283,7 @@ internal sealed partial class HextechMayhemModifier
         Player? owner = card.Owner;
         if (!HasActiveMonsterHex(MonsterHexKind.EightPennyGate)
             || isAutoPlay
+            || card.Type == CardType.Power
             || owner?.Creature.Side != CombatSide.Player
             || owner.Creature.CombatState?.RunState != RunState)
         {
@@ -255,27 +294,14 @@ internal sealed partial class HextechMayhemModifier
         return _combatTracking.EightPennyGatePlayersTriggeredThisTurn.Add(playerId);
     }
 
-    private int GetPlayerAttacksPlayedThisCombat(CardModel card)
+    private int GetPlayerAttacksPlayedThisTurn(CardModel card)
     {
         if (card.Owner == null)
         {
             return 0;
         }
 
-        return IsNetworkMultiplayer()
-            ? CountPlayerAttackCardsPlayedFromHistory(card.Owner)
-            : _combatTracking.PlayerAttackCardsPlayedThisCombat.GetValueOrDefault(card.Owner.NetId, 0);
-    }
-
-    private static int CountPlayerAttackCardsPlayedFromHistory(Player player)
-    {
-        return CombatManager.Instance.History.Entries
-            .OfType<CardPlayFinishedEntry>()
-            .Count(entry =>
-                entry.CardPlay.IsFirstInSeries
-                && !entry.CardPlay.IsAutoPlay
-                && entry.CardPlay.Card.Type == CardType.Attack
-                && entry.CardPlay.Card.Owner?.NetId == player.NetId);
+        return _combatTracking.PlayerAttackCardsPlayedThisTurn.GetValueOrDefault(card.Owner.NetId, 0);
     }
 
     public decimal ModifyEnemyHealAmount(Creature creature, decimal amount)

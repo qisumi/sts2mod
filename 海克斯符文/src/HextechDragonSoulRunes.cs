@@ -86,47 +86,53 @@ public sealed class OmniDragonSoulRune : HextechRelicBase
 		}
 
 		HextechCombatState? combatState = Owner.Creature.CombatState;
+		IReadOnlyList<int> dragonSoulRolls = RollDistinctDragonSoulCardKinds(count, combatState);
 		if (Owner.PlayerCombatState != null
 			&& combatState != null
 			&& CombatManager.Instance.IsInProgress
 			&& !CombatManager.Instance.IsOverOrEnding)
 		{
-				List<CardModel> cards = new(count);
-				for (int i = 0; i < count; i++)
-				{
-					cards.Add(CreateRandomUpgradedDragonSoulCard(combatState, i));
-				}
+			List<CardModel> cards = new(dragonSoulRolls.Count);
+			foreach (int roll in dragonSoulRolls)
+			{
+				cards.Add(CreateUpgradedDragonSoulCard(combatState, roll));
+			}
 
 			await HextechCardGeneration.AddGeneratedCardsToCombat(cards, PileType.Hand, addedByPlayer: true);
 			return;
 		}
 
-			List<CardPileAddResult> results = new(count);
-			for (int i = 0; i < count; i++)
-			{
-				CardModel card = CreateRandomUpgradedDragonSoulCard(null, i);
-				results.Add(await CardPileCmd.Add(card, PileType.Deck));
-				SaveManager.Instance.MarkCardAsSeen(card);
-			}
+		List<CardPileAddResult> results = new(dragonSoulRolls.Count);
+		foreach (int roll in dragonSoulRolls)
+		{
+			CardModel card = CreateUpgradedDragonSoulCard(null, roll);
+			results.Add(await CardPileCmd.Add(card, PileType.Deck));
+			SaveManager.Instance.MarkCardAsSeen(card);
+		}
 
 		CardCmd.PreviewCardPileAdd(results, 2f);
 	}
 
-		private CardModel CreateRandomUpgradedDragonSoulCard(HextechCombatState? combatState, int ordinal)
-		{
-			Player owner = Owner ?? throw new InvalidOperationException("Omni Dragon Soul created a card without an owner.");
-			int roll = HextechStableRandom.Index(
-				(RunState)owner.RunState,
-				DragonSoulCardKinds,
-				"omni-dragon-soul-card",
-				HextechStableRandom.PlayerKey(owner),
-				combatState?.RoundNumber.ToString() ?? "-1",
-				ordinal.ToString(),
-				owner.Deck.Cards.Count.ToString());
-			CardModel card = CreateDragonSoulCard(combatState, roll);
-			CardCmd.Upgrade(card);
-			return card;
-		}
+	private IReadOnlyList<int> RollDistinctDragonSoulCardKinds(int count, HextechCombatState? combatState)
+	{
+		Player owner = Owner ?? throw new InvalidOperationException("Omni Dragon Soul rolled cards without an owner.");
+		return HextechStableRandom.PickDistinct(
+			Enumerable.Range(0, DragonSoulCardKinds),
+			count,
+			(RunState)owner.RunState,
+			static roll => roll.ToString(),
+			"omni-dragon-soul-card",
+			HextechStableRandom.PlayerKey(owner),
+			combatState?.RoundNumber.ToString() ?? "-1",
+			owner.Deck.Cards.Count.ToString());
+	}
+
+	private CardModel CreateUpgradedDragonSoulCard(HextechCombatState? combatState, int roll)
+	{
+		CardModel card = CreateDragonSoulCard(combatState, roll);
+		CardCmd.Upgrade(card);
+		return card;
+	}
 
 	private CardModel CreateDragonSoulCard(HextechCombatState? combatState, int roll)
 	{

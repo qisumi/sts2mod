@@ -8,6 +8,15 @@ DIST_DIR="$ROOT/dist"
 PACKAGE_ROOT="$ROOT/.build/package"
 PACKAGE_DIR="$PACKAGE_ROOT/$FILE_STEM"
 ZIP_PATH="${1:-$DIST_DIR/$FILE_STEM.zip}"
+EXPECTED_ENTRIES_FILE=""
+ACTUAL_ENTRIES_FILE=""
+
+cleanup_temp_files() {
+  [[ -z "$EXPECTED_ENTRIES_FILE" || ! -f "$EXPECTED_ENTRIES_FILE" ]] || rm -f "$EXPECTED_ENTRIES_FILE"
+  [[ -z "$ACTUAL_ENTRIES_FILE" || ! -f "$ACTUAL_ENTRIES_FILE" ]] || rm -f "$ACTUAL_ENTRIES_FILE"
+}
+
+trap cleanup_temp_files EXIT
 
 clean_macos_metadata() {
   local target="$1"
@@ -43,6 +52,22 @@ rm -f "$ZIP_PATH"
 
 if unzip -l "$ZIP_PATH" | rg -q '(__MACOSX|/[.]_|[.]DS_Store)'; then
   print -u2 "Package still contains macOS metadata: $ZIP_PATH"
+  exit 1
+fi
+
+EXPECTED_ENTRIES_FILE="$(mktemp)"
+ACTUAL_ENTRIES_FILE="$(mktemp)"
+printf "%s\n" \
+  "$FILE_STEM/$FILE_STEM.dll" \
+  "$FILE_STEM/$FILE_STEM.json" \
+  "$FILE_STEM/$FILE_STEM.pck" \
+  | LC_ALL=C sort > "$EXPECTED_ENTRIES_FILE"
+unzip -Z1 "$ZIP_PATH" \
+  | rg -v '/$' \
+  | LC_ALL=C sort > "$ACTUAL_ENTRIES_FILE"
+
+if ! diff -u "$EXPECTED_ENTRIES_FILE" "$ACTUAL_ENTRIES_FILE" >&2; then
+  print -u2 "Package contains unexpected files: $ZIP_PATH"
   exit 1
 fi
 

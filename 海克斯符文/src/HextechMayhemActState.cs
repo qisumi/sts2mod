@@ -97,6 +97,14 @@ internal sealed class HextechMayhemActState
 		}
 	}
 
+	public void ClearMonsterHex(int actIndex)
+	{
+		if (actIndex >= 0 && actIndex < _monsterHexByAct.Length)
+		{
+			_monsterHexByAct[actIndex] = -1;
+		}
+	}
+
 	public IReadOnlyList<MonsterHexKind> GetActiveMonsterHexes(int currentActIndex, Func<int, bool> shouldRecoverMonsterHex)
 	{
 		List<MonsterHexKind> result = new();

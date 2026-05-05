@@ -202,6 +202,12 @@ public abstract class HextechRelicBase : RelicModel
 		return player.Character.Id == ModelDb.GetId<Necrobinder>();
 	}
 
+	protected void FlashDeferred(IEnumerable<Creature>? targets = null)
+	{
+		Creature[] targetArray = targets?.ToArray() ?? Array.Empty<Creature>();
+		Callable.From(() => Flash(targetArray)).CallDeferred();
+	}
+
 	protected async Task AddCardCopiesToDeckOrHand<TCard>(int count)
 		where TCard : CardModel
 	{

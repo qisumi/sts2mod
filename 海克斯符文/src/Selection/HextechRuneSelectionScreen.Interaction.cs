@@ -69,6 +69,76 @@ internal sealed partial class HextechRuneSelectionScreen : Control, IOverlayScre
 		RebuildCards();
 	}
 
+	private void OnEnemyHexRerollPressed()
+	{
+		if (_choiceLocked || _enemyHexRemoved || _enemyHexRerollFunc == null)
+		{
+			return;
+		}
+
+		MonsterHexKind? rerolled = _enemyHexRerollFunc(_monsterHexKind, _enemyHexRerollCount);
+		if (rerolled == null || rerolled == _monsterHexKind)
+		{
+			return;
+		}
+
+		_monsterHexKind = rerolled;
+		_monsterHexRelic = CreateMonsterHexRelic(rerolled);
+		_enemyHexRerollCount++;
+		Log.Info($"[{ModInfo.Id}][Mayhem] SelectionScreen.OnEnemyHexRerollPressed: hex={rerolled} count={_enemyHexRerollCount}");
+		NotifyEnemyHexChanged();
+		RebuildEnemyPreview();
+	}
+
+	private void OnEnemyHexRemovePressed()
+	{
+		if (_choiceLocked)
+		{
+			return;
+		}
+
+		if (_enemyHexRemoved)
+		{
+			_enemyHexRemoved = false;
+			_monsterHexKind = _monsterHexBeforeRemoval ?? _monsterHexKind;
+			_monsterHexRelic = CreateMonsterHexRelic(_monsterHexKind);
+			Log.Info($"[{ModInfo.Id}][Mayhem] SelectionScreen.OnEnemyHexRemovePressed: undo hex={_monsterHexKind}");
+		}
+		else
+		{
+			_monsterHexBeforeRemoval = _monsterHexKind;
+			_enemyHexRemoved = true;
+			Log.Info($"[{ModInfo.Id}][Mayhem] SelectionScreen.OnEnemyHexRemovePressed: remove previous={_monsterHexBeforeRemoval}");
+		}
+
+		NotifyEnemyHexChanged();
+		RebuildEnemyPreview();
+	}
+
+	public void ApplyEnemyHexAdjustment(MonsterHexKind? monsterHex, bool removed, int rerollCount)
+	{
+		_enemyHexRemoved = removed;
+		_enemyHexRerollCount = Math.Max(0, rerollCount);
+		if (!removed || monsterHex.HasValue)
+		{
+			_monsterHexKind = monsterHex;
+			_monsterHexRelic = CreateMonsterHexRelic(monsterHex);
+		}
+
+		if (removed && monsterHex.HasValue)
+		{
+			_monsterHexBeforeRemoval = monsterHex;
+		}
+
+		Log.Info($"[{ModInfo.Id}][Mayhem] SelectionScreen.ApplyEnemyHexAdjustment: removed={removed} hex={monsterHex} count={_enemyHexRerollCount}");
+		RebuildEnemyPreview();
+	}
+
+	private void NotifyEnemyHexChanged()
+	{
+		_enemyHexChanged?.Invoke(CurrentMonsterHex, _enemyHexRemoved, _enemyHexRerollCount);
+	}
+
 	public async Task<IEnumerable<RelicModel>> RelicsSelected(bool removeOverlay = true)
 	{
 		IEnumerable<RelicModel> result = await _completionSource.Task;

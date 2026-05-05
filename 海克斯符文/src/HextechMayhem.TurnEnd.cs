@@ -15,16 +15,27 @@ internal sealed partial class HextechMayhemModifier
 {
     public override async Task BeforeTurnEnd(PlayerChoiceContext choiceContext, CombatSide side)
     {
+        CombatRoom? combatRoom = RunState.CurrentRoom as CombatRoom;
+
         if (side == CombatSide.Player
-            && RunState.CurrentRoom is CombatRoom currentCombatRoom
+            && combatRoom != null
             && IsNetworkMultiplayer())
         {
-            await ResolveWarmogsSpiritDrawProgressFromHistory(currentCombatRoom.CombatState);
+            await ResolveWarmogsSpiritDrawProgressFromHistory(combatRoom.CombatState);
+        }
+
+        if (side == CombatSide.Player)
+        {
+            _combatTracking.PreparePlayerSideTurnEnd();
+            if (combatRoom != null)
+            {
+                RefreshPlayerAttackCostDoublingPreviews(GetAlivePlayerSideCreatures(combatRoom.CombatState));
+            }
         }
 
         if (side != CombatSide.Player
             || !HasActiveMonsterHex(MonsterHexKind.HastyScribble)
-            || RunState.CurrentRoom is not CombatRoom combatRoom)
+            || combatRoom == null)
         {
             return;
         }

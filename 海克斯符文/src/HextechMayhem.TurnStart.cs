@@ -16,6 +16,7 @@ internal sealed partial class HextechMayhemModifier
 	private async Task BeforePlayerSideTurnStart(HextechCombatState combatState, IReadOnlyList<Creature> players)
 	{
 		_combatTracking.PreparePlayerSideTurnStart();
+		RefreshPlayerAttackCostDoublingPreviews(players);
 
 		await ApplyToCurrentEnemiesIfNeeded();
 	    QueueEscapePlanTriggersFromCurrentEnemyState(combatState);
@@ -153,6 +154,17 @@ internal sealed partial class HextechMayhemModifier
         }
 
         IReadOnlyList<Creature> aliveEnemies = GetAliveEnemies(combatState);
+        if (HasActiveMonsterHex(MonsterHexKind.ShrinkEngine))
+        {
+            foreach (Creature enemy in aliveEnemies)
+            {
+                if (enemy.GetPowerAmount<SlipperyPower>() <= 0m)
+                {
+                    await HextechEnemyPowerScalingHooks.Apply<SlipperyPower>(enemy, ShrinkEngineSlipperyStacks, enemy, null);
+                }
+            }
+        }
+
         if (HasActiveMonsterHex(MonsterHexKind.DivineIntervention)
             && combatState.RoundNumber > 1
             && combatState.RoundNumber % 4 == 0
@@ -183,6 +195,7 @@ internal sealed partial class HextechMayhemModifier
 	private async Task BeforeEnemySideTurnStart(HextechCombatState combatState, IReadOnlyList<Creature> players)
 	{
 	    _combatTracking.PrepareEnemySideTurnStart();
+		RefreshPlayerAttackCostDoublingPreviews(players);
 
 	    IReadOnlyList<Creature> enemies = GetAliveEnemies(combatState);
 
@@ -205,11 +218,6 @@ internal sealed partial class HextechMayhemModifier
         {
             foreach (Creature enemy in enemies)
             {
-                if (enemy.GetPowerAmount<SlipperyPower>() <= 0m)
-                {
-                    await HextechEnemyPowerScalingHooks.Apply<SlipperyPower>(enemy, ShrinkEngineSlipperyStacks, enemy, null);
-                }
-
                 if (enemy.CombatId != null)
                 {
                     uint combatId = enemy.CombatId.Value;
@@ -260,14 +268,7 @@ internal sealed partial class HextechMayhemModifier
         {
             await RunGroupedPlayerDebuffBurst(async () =>
             {
-                foreach (Creature player in players)
-                {
-                    decimal doom = Math.Floor(player.MaxHp * 0.05m);
-                    if (doom > 0m)
-                    {
-                        await PowerCmd.Apply<DoomPower>(player, doom, null, null);
-                    }
-                }
+                await PowerCmd.Apply<DisintegrationPower>(players, 2m, null, null);
             });
         }
 
@@ -293,7 +294,7 @@ internal sealed partial class HextechMayhemModifier
             && combatState.RoundNumber % 2 == 0)
         {
             IReadOnlyList<Creature> queenTargets = players
-                .Where(player => player.GetPowerAmount<ChainsOfBindingPower>() <= 3m)
+                .Where(player => player.GetPowerAmount<ChainsOfBindingPower>() < 3m)
                 .ToList();
             if (queenTargets.Count > 0)
             {

@@ -4,9 +4,12 @@ using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.addons.mega_text;
 using MegaCrit.Sts2.Core.Entities.Relics;
+using MegaCrit.Sts2.Core.Entities.UI;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Nodes;
+using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Screens.RelicCollection;
 using MegaCrit.Sts2.Core.Unlocks;
 using static HextechRunes.HextechHookReflection;
@@ -56,6 +59,8 @@ internal static class CollectionHooks
 
 	private static readonly FieldInfo? SubCategoriesField = TryGetField(typeof(NRelicCollectionCategory), "_subCategories");
 
+	private static readonly FieldInfo? RelicsContainerField = TryGetField(typeof(NRelicCollectionCategory), "_relicsContainer");
+
 	private static readonly MethodInfo? CreateForSubcategoryMethod = TryGetMethod(typeof(NRelicCollectionCategory), "CreateForSubcategory", BindingFlags.Instance | BindingFlags.NonPublic);
 
 	private static readonly MethodInfo? LoadSubcategoryMethod = TryGetMethod(
@@ -81,13 +86,28 @@ internal static class CollectionHooks
 
 	private static string? _starterHeaderTemplate;
 
+	private static bool _loggedFlatFallback;
+
+	private static bool _loggedMissingFallbackContainer;
+
 	public static void Install(Harmony harmony)
 	{
-		List<string> missing = GetMissingHookDependencies().ToList();
-		if (missing.Count > 0)
+		if (LoadRelicsMethod == null)
 		{
-			Log.Warn($"[{ModInfo.Id}][Mayhem] Relic collection hooks disabled: missing {string.Join(", ", missing)}.");
+			Log.Warn($"[{ModInfo.Id}][Mayhem] Relic collection hooks disabled: missing NRelicCollectionCategory.LoadRelics.");
 			return;
+		}
+
+		List<string> missingSubcategoryDependencies = GetMissingSubcategoryDependencies().ToList();
+		if (missingSubcategoryDependencies.Count > 0)
+		{
+			if (RelicsContainerField == null)
+			{
+				Log.Warn($"[{ModInfo.Id}][Mayhem] Relic collection hooks disabled: missing {string.Join(", ", missingSubcategoryDependencies.Append("NRelicCollectionCategory._relicsContainer"))}.");
+				return;
+			}
+
+			Log.Warn($"[{ModInfo.Id}][Mayhem] Relic collection subcategory hooks unavailable: missing {string.Join(", ", missingSubcategoryDependencies)}; using flat starter-grid fallback.");
 		}
 
 		harmony.Patch(
@@ -110,8 +130,80 @@ internal static class CollectionHooks
 		}
 
 		_starterHeaderTemplate ??= header.GetRawText();
+		if (!CanUseSubcategoryHooks())
+		{
+			AddFlatFallbackRelics(__instance, collection);
+			return;
+		}
+
 		AddHextechSubcategory(__instance, collection, seenRelics, allUnlockedRelics);
 		AddForgeSubcategory(__instance, collection, seenRelics, allUnlockedRelics);
+	}
+
+	private static void AddFlatFallbackRelics(NRelicCollectionCategory self, NRelicCollection collection)
+	{
+		if (collection.Relics.Any(IsHextechCollectionRelic))
+		{
+			return;
+		}
+
+		if (RelicsContainerField?.GetValue(self) is not GridContainer relicsContainer)
+		{
+			if (!_loggedMissingFallbackContainer)
+			{
+				Log.Warn($"[{ModInfo.Id}][Mayhem] Relic collection flat fallback skipped: starter relic grid is unavailable.");
+				_loggedMissingFallbackContainer = true;
+			}
+
+			return;
+		}
+
+		List<RelicModel> relics = GetFlatFallbackRelics();
+		if (relics.Count == 0)
+		{
+			return;
+		}
+
+		collection.AddRelics(relics);
+		foreach (RelicModel relic in relics)
+		{
+			NRelicCollectionEntry entry = NRelicCollectionEntry.Create(relic, ModelVisibility.Visible);
+			relicsContainer.AddChild(entry);
+			entry.Connect(
+				NClickableControl.SignalName.Released,
+				Callable.From<NRelicCollectionEntry>(entry => OpenFallbackRelic(collection, entry)));
+		}
+
+		if (!_loggedFlatFallback)
+		{
+			Log.Warn($"[{ModInfo.Id}][Mayhem] Added {relics.Count} Hextech relics to the starter relic collection grid through the mobile fallback.");
+			_loggedFlatFallback = true;
+		}
+	}
+
+	private static List<RelicModel> GetFlatFallbackRelics()
+	{
+		return HextechCatalog.GetCanonicalGenericSelectableRunes()
+			.Concat(HextechCatalog.GetCharacterRuneGroups().SelectMany(static group => group.Relics))
+			.Concat(HextechCatalog.GetCanonicalForges())
+			.Distinct()
+			.ToList();
+	}
+
+	private static bool IsHextechCollectionRelic(RelicModel relic)
+	{
+		return HextechCatalog.IsHextechRelic(relic) || HextechCatalog.IsHextechForgeRelic(relic);
+	}
+
+	private static void OpenFallbackRelic(NRelicCollection collection, NRelicCollectionEntry entry)
+	{
+		if (NGame.Instance == null)
+		{
+			return;
+		}
+
+		NGame.Instance.GetInspectRelicScreen().Open(collection.Relics, entry.relic);
+		collection.SetLastFocusedRelic(entry);
 	}
 
 	private static void AddHextechSubcategory(
@@ -311,7 +403,15 @@ internal static class CollectionHooks
 		return (List<NRelicCollectionCategory>)SubCategoriesField!.GetValue(category)!;
 	}
 
-	private static IEnumerable<string> GetMissingHookDependencies()
+	private static bool CanUseSubcategoryHooks()
+	{
+		return HeaderLabelField != null
+			&& SubCategoriesField != null
+			&& CreateForSubcategoryMethod != null
+			&& LoadSubcategoryMethod != null;
+	}
+
+	private static IEnumerable<string> GetMissingSubcategoryDependencies()
 	{
 		if (HeaderLabelField == null)
 		{
@@ -331,11 +431,6 @@ internal static class CollectionHooks
 		if (LoadSubcategoryMethod == null)
 		{
 			yield return "NRelicCollectionCategory.LoadSubcategory";
-		}
-
-		if (LoadRelicsMethod == null)
-		{
-			yield return "NRelicCollectionCategory.LoadRelics";
 		}
 	}
 

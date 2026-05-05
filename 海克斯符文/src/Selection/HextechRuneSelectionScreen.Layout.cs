@@ -80,9 +80,16 @@ internal sealed partial class HextechRuneSelectionScreen : Control, IOverlayScre
 		title.SetTextAutoSize(new LocString(LocTable, "HEXTECH_SELECTION_TITLE").GetRawText());
 		root.AddChild(title);
 
-		if (_monsterHexRelic != null)
+		if (_monsterHexRelic != null || _enemyHexControlsEnabled)
 		{
-			root.AddChild(CreateEnemyPreview(_monsterHexRelic));
+			_enemyPreviewHost = new VBoxContainer()
+			{
+				Name = "EnemyPreviewHost",
+				MouseFilter = MouseFilterEnum.Ignore,
+				SizeFlagsHorizontal = SizeFlags.ExpandFill
+			};
+			root.AddChild(_enemyPreviewHost);
+			RebuildEnemyPreview();
 		}
 
 		HBoxContainer row = new()
@@ -112,6 +119,22 @@ internal sealed partial class HextechRuneSelectionScreen : Control, IOverlayScre
 		root.AddChild(_statusLabel);
 	}
 
+	private void RebuildEnemyPreview()
+	{
+		if (_enemyPreviewHost == null)
+		{
+			return;
+		}
+
+		foreach (Node child in _enemyPreviewHost.GetChildren())
+		{
+			_enemyPreviewHost.RemoveChild(child);
+			child.QueueFree();
+		}
+
+		_enemyPreviewHost.AddChild(CreateEnemyPreview());
+	}
+
 	private void RebuildCards()
 	{
 		if (_cardsRow == null)
@@ -139,7 +162,7 @@ internal sealed partial class HextechRuneSelectionScreen : Control, IOverlayScre
 		}
 	}
 
-	private Control CreateEnemyPreview(RelicModel relic)
+	private Control CreateEnemyPreview()
 	{
 		PanelContainer panel = new()
 		{
@@ -175,7 +198,26 @@ internal sealed partial class HextechRuneSelectionScreen : Control, IOverlayScre
 			MouseFilter = MouseFilterEnum.Ignore
 		};
 		row.AddChild(iconBox);
-		iconBox.AddChild(CreateRelicTexture(relic, 84f));
+		if (_monsterHexRelic != null && !_enemyHexRemoved)
+		{
+			TextureRect enemyTexture = CreateRelicTexture(_monsterHexRelic, 84f);
+			iconBox.AddChild(enemyTexture);
+			AttachRelicHoverTips(enemyTexture, _monsterHexRelic);
+		}
+		else
+		{
+			MegaLabel removedIcon = new()
+			{
+				Text = "-",
+				HorizontalAlignment = HorizontalAlignment.Center,
+				VerticalAlignment = VerticalAlignment.Center,
+				MaxFontSize = 52,
+				MinFontSize = 42
+			};
+			ApplyDefaultMegaLabelTheme(removedIcon);
+			removedIcon.Modulate = new Color(0.86f, 0.88f, 0.92f, 0.68f);
+			iconBox.AddChild(removedIcon);
+		}
 
 		VBoxContainer textColumn = new()
 		{
@@ -211,25 +253,73 @@ internal sealed partial class HextechRuneSelectionScreen : Control, IOverlayScre
 		};
 		ApplyDefaultMegaLabelTheme(title);
 		title.Modulate = new Color(0.97f, 0.96f, 0.9f, 0.96f);
-		title.SetTextAutoSize(relic.Title.GetFormattedText());
+		title.SetTextAutoSize(_monsterHexRelic != null && !_enemyHexRemoved
+			? _monsterHexRelic.Title.GetFormattedText()
+			: new LocString(LocTable, "HEXTECH_ENEMY_REMOVED_TITLE").GetRawText());
 		titleRow.AddChild(title);
 
-		titleRow.AddChild(CreateRarityPill());
+		if (_monsterHexRelic != null && !_enemyHexRemoved)
+		{
+			titleRow.AddChild(CreateRarityPill());
+		}
 
 		MegaRichTextLabel body = CreateDescriptionLabel();
 		body.MaxFontSize = 17;
 		body.MinFontSize = 13;
-		if (MonsterHexCatalog.TryGetMonsterHexKind(relic, out MonsterHexKind enemyHex))
+		if (_monsterHexKind.HasValue && !_enemyHexRemoved)
 		{
-			body.SetTextAutoSize(MonsterHexCatalog.GetEnemyHexDescriptionFormatted(enemyHex));
+			body.SetTextAutoSize(MonsterHexCatalog.GetEnemyHexDescriptionFormatted(_monsterHexKind.Value));
 		}
 		else
 		{
-			body.SetTextAutoSize(relic.DynamicDescription.GetFormattedText());
+			body.SetTextAutoSize(new LocString(LocTable, "HEXTECH_ENEMY_REMOVED_DESCRIPTION").GetRawText());
 		}
 		textColumn.AddChild(body);
 
+		if (_enemyHexControlsEnabled)
+		{
+			VBoxContainer actionColumn = new()
+			{
+				Name = "EnemyHexActionColumn",
+				MouseFilter = MouseFilterEnum.Pass,
+				CustomMinimumSize = new Vector2(148f, 0f),
+				SizeFlagsHorizontal = SizeFlags.ShrinkEnd,
+				SizeFlagsVertical = SizeFlags.ExpandFill,
+				Alignment = BoxContainer.AlignmentMode.Center
+			};
+			actionColumn.AddThemeConstantOverride("separation", 12);
+			row.AddChild(actionColumn);
+
+			Button rerollButton = CreateEnemyHexActionButton(new LocString(LocTable, "HEXTECH_REROLL").GetRawText());
+			rerollButton.Disabled = _enemyHexRemoved || _enemyHexRerollFunc == null;
+			rerollButton.Pressed += OnEnemyHexRerollPressed;
+			actionColumn.AddChild(rerollButton);
+
+			Button removeButton = CreateEnemyHexActionButton(new LocString(LocTable, _enemyHexRemoved ? "HEXTECH_ENEMY_UNDO_REMOVE" : "HEXTECH_ENEMY_REMOVE").GetRawText());
+			removeButton.Disabled = _monsterHexKind == null && !_enemyHexRemoved;
+			removeButton.Pressed += OnEnemyHexRemovePressed;
+			actionColumn.AddChild(removeButton);
+		}
+
 		return panel;
+	}
+
+	private Button CreateEnemyHexActionButton(string text)
+	{
+		Color accent = GetAccentColor();
+		Button button = new()
+		{
+			Text = text,
+			FocusMode = FocusModeEnum.All,
+			MouseDefaultCursorShape = CursorShape.PointingHand,
+			CustomMinimumSize = new Vector2(136f, 42f)
+		};
+		button.AddThemeStyleboxOverride("normal", CreateRerollStyle(new Color(0.08f, 0.1f, 0.15f, 0.72f), accent.Lightened(0.05f)));
+		button.AddThemeStyleboxOverride("hover", CreateRerollStyle(new Color(0.1f, 0.13f, 0.18f, 0.82f), accent));
+		button.AddThemeStyleboxOverride("pressed", CreateRerollStyle(new Color(0.07f, 0.09f, 0.13f, 0.86f), accent.Lightened(0.12f)));
+		button.AddThemeStyleboxOverride("focus", CreateRerollStyle(new Color(0.1f, 0.13f, 0.18f, 0.82f), accent));
+		button.AddThemeStyleboxOverride("disabled", CreateRerollStyle(new Color(0.08f, 0.09f, 0.12f, 0.56f), accent.Darkened(0.35f)));
+		return button;
 	}
 
 	private Control CreateCardSlot(RelicModel relic, int slotIndex)

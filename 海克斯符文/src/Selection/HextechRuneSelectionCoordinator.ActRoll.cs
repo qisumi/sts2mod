@@ -215,4 +215,72 @@ internal static partial class HextechRuneSelectionCoordinator
 
 		return pool;
 	}
+
+	private static MonsterHexKind? RerollEnemyHexForAct(
+		HextechMayhemModifier modifier,
+		HextechRarityTier rarity,
+		RunState runState,
+		int actIndex,
+		MonsterHexKind? currentHex,
+		int rerollOrdinal,
+		IReadOnlySet<ModelId> excludedIconRelicIds)
+	{
+		List<MonsterHexKind> pool = MonsterHexCatalog.GetMonsterHexesForRarity(rarity)
+			.Where(kind => kind != currentHex)
+			.Where(kind => !IsMonsterHexChosenInOtherAct(modifier, actIndex, kind))
+			.Where(kind => !excludedIconRelicIds.Contains(GetMonsterHexIconRelicId(kind)))
+			.ToList();
+		if (pool.Count == 0)
+		{
+			pool = MonsterHexCatalog.GetMonsterHexesForRarity(rarity)
+				.Where(kind => kind != currentHex)
+				.Where(kind => !IsMonsterHexChosenInOtherAct(modifier, actIndex, kind))
+				.ToList();
+		}
+		if (pool.Count == 0)
+		{
+			pool = MonsterHexCatalog.GetMonsterHexesForRarity(rarity)
+				.Where(kind => kind != currentHex)
+				.ToList();
+		}
+		if (pool.Count == 0)
+		{
+			pool = MonsterHexCatalog.GetMonsterHexesForRarity(rarity).ToList();
+		}
+		if (pool.Count == 0)
+		{
+			return currentHex;
+		}
+
+		string poolKey = string.Join(",", pool.Select(static kind => ((int)kind).ToString()).OrderBy(static key => key, StringComparer.Ordinal));
+		int index = HextechStableRandom.Index(
+			runState,
+			pool.Count,
+			"enemy-hex-reroll",
+			actIndex.ToString(),
+			((int)rarity).ToString(),
+			(currentHex.HasValue ? ((int)currentHex.Value).ToString() : "none"),
+			rerollOrdinal.ToString(),
+			poolKey);
+		return pool[index];
+	}
+
+	private static bool IsMonsterHexChosenInOtherAct(HextechMayhemModifier modifier, int actIndex, MonsterHexKind hex)
+	{
+		for (int i = 0; i < 3; i++)
+		{
+			if (i != actIndex && modifier.GetMonsterHexForAct(i) == hex)
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private static ModelId GetMonsterHexIconRelicId(MonsterHexKind hex)
+	{
+		RelicModel relic = MonsterHexCatalog.GetIconRelicForMonsterHex(hex);
+		return relic.CanonicalInstance?.Id ?? relic.Id;
+	}
 }

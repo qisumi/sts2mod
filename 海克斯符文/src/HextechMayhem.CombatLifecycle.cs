@@ -43,6 +43,19 @@ internal sealed partial class HextechMayhemModifier
 			return;
 		}
 
+		if (RunState.CurrentRoom is CombatRoom combatRoom
+			&& await TryApplyDeferredBossStartHexes(creature, combatRoom))
+		{
+			HextechEnemyUi.Refresh(this);
+			return;
+		}
+
+		if (ShouldDeferInitialBossStartHexes(creature))
+		{
+			HextechEnemyUi.Refresh(this);
+			return;
+		}
+
 		await ApplyPersistentMonsterHexes(creature);
 		await TryApplyServantMasterIllusion(creature, creature, null);
 		HextechEnemyUi.Refresh(this);
@@ -57,6 +70,11 @@ internal sealed partial class HextechMayhemModifier
 
 		foreach (Creature enemy in combatRoom.CombatState.Enemies.Where(static creature => creature.IsAlive))
 		{
+			if (ShouldDeferInitialBossStartHexes(enemy))
+			{
+				continue;
+			}
+
 			await ApplyPersistentMonsterHexes(enemy);
 		}
 
@@ -65,6 +83,7 @@ internal sealed partial class HextechMayhemModifier
 
 	public override async Task BeforeSideTurnStart(PlayerChoiceContext choiceContext, CombatSide side, HextechCombatState combatState)
 	{
+		await ApplyDeferredBossStartHexes(combatState);
 		await NormalizeEnemyPainfulStabsPowers(combatState);
 
 		IReadOnlyList<Creature> players = GetAlivePlayerSideCreatures(combatState);

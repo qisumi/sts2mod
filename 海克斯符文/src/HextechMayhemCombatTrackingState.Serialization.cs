@@ -411,13 +411,15 @@ internal sealed partial class HextechMayhemCombatTrackingState
 		public List<uint> MadScientistApplied { get; set; } = [];
 		public List<uint> UnmovableMountainApplied { get; set; } = [];
 		public List<uint> GoldenSpatulaApplied { get; set; } = [];
+		public List<uint> DoormakerRealStartApplied { get; set; } = [];
+		public Dictionary<uint, int> TestSubjectPhaseStartApplied { get; set; } = new();
 		public Dictionary<uint, int> TankEngineStacks { get; set; } = new();
 		public Dictionary<uint, int> ShrinkEngineStacks { get; set; } = new();
 		public Dictionary<uint, int> GetExcitedPending { get; set; } = new();
 		public List<uint> FeelTheBurnPending { get; set; } = [];
 		public List<uint> MountainSoulHasPreviousTurn { get; set; } = [];
 		public List<uint> MountainSoulDamagedSinceLastTurn { get; set; } = [];
-		public Dictionary<ulong, int> PlayerAttackCardsPlayedThisCombat { get; set; } = new();
+		public Dictionary<ulong, int> PlayerAttackCardsPlayedThisTurn { get; set; } = new();
 		public Dictionary<ulong, int> PlayerCardsDrawnThisCombat { get; set; } = new();
 		public List<ulong> EightPennyGatePlayersTriggeredThisTurn { get; set; } = [];
 		public int EnemyProtectiveVeilTurnCounter { get; set; }

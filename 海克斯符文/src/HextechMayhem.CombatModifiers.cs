@@ -129,7 +129,7 @@ internal sealed partial class HextechMayhemModifier
             return false;
         }
 
-        int nextAttackIndex = GetPlayerAttacksPlayedThisCombat(card) + 1;
+        int nextAttackIndex = GetPlayerAttacksPlayedThisTurn(card) + 1;
         decimal multiplier = 1m;
         if (HasActiveMonsterHex(MonsterHexKind.LightEmUp) && nextAttackIndex % 4 == 0)
         {

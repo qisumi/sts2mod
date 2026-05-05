@@ -1,10 +1,14 @@
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Commands;
+using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
+using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Entities.Powers;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Cards;
 using MegaCrit.Sts2.Core.Models.Powers;
+using MegaCrit.Sts2.Core.Saves;
 using MegaCrit.Sts2.Core.ValueProps;
 
 namespace HextechRunes;
@@ -19,7 +23,7 @@ internal sealed partial class HextechMayhemModifier
 		}
 
 		TrackEnemyDamageReceived(target, combatId);
-		await ApplyEnemyDamageReceivedReactiveHexes(target);
+		await ApplyEnemyDamageReceivedReactiveHexes(target, dealer, cardSource);
 
 		if (!ShouldSuppressDuplicateEnemyThresholdTrigger(target, result, dealer, cardSource))
 		{
@@ -63,7 +67,7 @@ internal sealed partial class HextechMayhemModifier
 		}
 	}
 
-	private async Task ApplyEnemyDamageReceivedReactiveHexes(Creature target)
+	private async Task ApplyEnemyDamageReceivedReactiveHexes(Creature target, Creature? dealer, CardModel? cardSource)
 	{
 		if (HasActiveMonsterHex(MonsterHexKind.BloodPact)
 			&& target.IsAlive
@@ -78,6 +82,43 @@ internal sealed partial class HextechMayhemModifier
 		{
 			await HextechEnemyPowerScalingHooks.Apply<SlipperyPower>(target, ClownCollegeSlipperyStacks, target, null);
 		}
+
+		if (HasActiveMonsterHex(MonsterHexKind.MadScientist)
+			&& target.IsAlive
+			&& target.CombatState is HextechCombatState combatState)
+		{
+			Player? player = ResolveMadScientistDazedTarget(combatState, dealer, cardSource);
+			if (player != null)
+			{
+				CardModel dazed = combatState.CreateCard<Dazed>(player);
+				await HextechCardGeneration.AddGeneratedCardToCombat(
+					dazed,
+					PileType.Discard,
+					addedByPlayer: false,
+					position: CardPilePosition.Top);
+			}
+		}
+	}
+
+	private static Player? ResolveMadScientistDazedTarget(HextechCombatState combatState, Creature? dealer, CardModel? cardSource)
+	{
+		Player? cardOwner = cardSource?.Owner;
+		if (cardOwner?.Creature.IsAlive == true && cardOwner.Creature.CombatState == combatState)
+		{
+			return cardOwner;
+		}
+
+		Player? dealerPlayer = dealer?.Player;
+		if (dealerPlayer?.Creature.IsAlive == true && dealerPlayer.Creature.CombatState == combatState)
+		{
+			return dealerPlayer;
+		}
+
+		List<Player> alivePlayers = GetAlivePlayerSideCreatures(combatState)
+			.Select(static creature => creature.Player)
+			.OfType<Player>()
+			.ToList();
+		return alivePlayers.Count == 1 ? alivePlayers[0] : null;
 	}
 
 	private async Task ApplyEnemyThresholdHexes(Creature target, uint combatId)

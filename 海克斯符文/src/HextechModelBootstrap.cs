@@ -13,12 +13,24 @@ internal static class HextechModelBootstrap
 {
 	private static readonly MethodInfo AddModelToPoolMethod = typeof(ModHelper).GetMethods(BindingFlags.Public | BindingFlags.Static)
 		.Single(method => method.Name == "AddModelToPool" && method.IsGenericMethodDefinition && method.GetGenericArguments().Length == 2);
+	private static readonly object InstallLock = new();
+	private static bool _installed;
 
 	public static void Install()
 	{
-		PreloadDependencyAssemblies();
-		InjectSavedPropertyCaches();
-		RegisterModels();
+		lock (InstallLock)
+		{
+			if (_installed)
+			{
+				Log.Info($"[{ModInfo.Id}] Model bootstrap already installed; skipping duplicate registration.");
+				return;
+			}
+
+			PreloadDependencyAssemblies();
+			InjectSavedPropertyCaches();
+			RegisterModels();
+			_installed = true;
+		}
 	}
 
 	private static void InjectSavedPropertyCaches()

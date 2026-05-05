@@ -9,33 +9,32 @@ namespace HextechRunes;
 
 internal sealed partial class HextechMayhemModifier
 {
-	private async Task ApplyPersistentMonsterHexes(Creature creature)
+	private async Task ApplyPersistentMonsterHexes(Creature creature, bool replayOneShotPowers = false)
 	{
+		int? maxHpBaseOverride = replayOneShotPowers ? creature.MaxHp : null;
+
 		if (HasActiveMonsterHex(MonsterHexKind.Goliath)
-			&& creature.CombatId != null)
+			&& TryMarkPersistentHexApplied(_combatTracking.GoliathApplied, creature, replayOneShotPowers))
 		{
-			_combatTracking.GoliathApplied.Add(creature.CombatId.Value);
-			await EnsureMonsterMaxHpBonus(creature, 0.3m);
+			await EnsureMonsterMaxHpBonus(creature, 0.3m, maxHpBaseOverride);
 			UpdateEnemyScale(creature);
 		}
 
 		if (HasActiveMonsterHex(MonsterHexKind.AstralBody)
-			&& creature.CombatId != null)
+			&& TryMarkPersistentHexApplied(_combatTracking.AstralBodyApplied, creature, replayOneShotPowers))
 		{
-			_combatTracking.AstralBodyApplied.Add(creature.CombatId.Value);
-			await EnsureMonsterMaxHpBonus(creature, 0.3m);
+			await EnsureMonsterMaxHpBonus(creature, 0.3m, maxHpBaseOverride);
 		}
 
 		if (HasActiveMonsterHex(MonsterHexKind.GoldenSpatula)
-			&& creature.CombatId != null)
+			&& TryMarkPersistentHexApplied(_combatTracking.GoldenSpatulaApplied, creature, replayOneShotPowers))
 		{
-			_combatTracking.GoldenSpatulaApplied.Add(creature.CombatId.Value);
-			await EnsureMonsterMaxHpBonus(creature, 0.35m);
+			await EnsureMonsterMaxHpBonus(creature, 0.35m, maxHpBaseOverride);
 		}
 
 		if (HasActiveMonsterHex(MonsterHexKind.MadScientist)
 			&& creature.CombatId != null
-			&& _combatTracking.MadScientistApplied.Add(creature.CombatId.Value))
+			&& TryMarkPersistentHexApplied(_combatTracking.MadScientistApplied, creature, replayOneShotPowers))
 		{
 			int maxHpLoss = Math.Max(1, (int)Math.Floor(creature.MaxHp * 0.2m));
 			int newMaxHp = Math.Max(1, creature.MaxHp - maxHpLoss);
@@ -43,30 +42,28 @@ internal sealed partial class HextechMayhemModifier
 			{
 				await CreatureCmdCompat.SetMaxHp(creature, newMaxHp);
 			}
-
-			await PowerCmd.Apply<PersonalHivePower>(creature, 1m, creature, null);
 		}
 
 		if (HasActiveMonsterHex(MonsterHexKind.DrawYourSword)
-			&& TryMarkPersistentHexApplied(_combatTracking.DrawYourSwordApplied, creature))
+			&& TryMarkPersistentHexApplied(_combatTracking.DrawYourSwordApplied, creature, replayOneShotPowers))
 		{
 			await PowerCmd.Apply<ImbalancedPower>(creature, 1m, creature, null);
 		}
 
 		if (HasActiveMonsterHex(MonsterHexKind.ProtectiveVeil)
-			&& TryMarkPersistentHexApplied(_combatTracking.ProtectiveVeilApplied, creature))
+			&& TryMarkPersistentHexApplied(_combatTracking.ProtectiveVeilApplied, creature, replayOneShotPowers))
 		{
 			await HextechEnemyPowerScalingHooks.Apply<ArtifactPower>(creature, ProtectiveVeilInitialArtifactStacks, creature, null);
 		}
 
 		if (HasActiveMonsterHex(MonsterHexKind.Thornmail)
-			&& TryMarkPersistentHexApplied(_combatTracking.ThornmailApplied, creature))
+			&& TryMarkPersistentHexApplied(_combatTracking.ThornmailApplied, creature, replayOneShotPowers))
 		{
 			await HextechEnemyPowerScalingHooks.Apply<ReflectPower>(creature, 5m, creature, null);
 		}
 
 		if (HasActiveMonsterHex(MonsterHexKind.SuperBrain)
-			&& TryMarkPersistentHexApplied(_combatTracking.SuperBrainApplied, creature))
+			&& TryMarkPersistentHexApplied(_combatTracking.SuperBrainApplied, creature, replayOneShotPowers))
 		{
 			int plating = (int)Math.Floor(creature.MaxHp * 0.04m);
 			if (plating > 0)
@@ -85,7 +82,7 @@ internal sealed partial class HextechMayhemModifier
 		}
 
 		if (HasActiveMonsterHex(MonsterHexKind.UnmovableMountain)
-			&& TryMarkPersistentHexApplied(_combatTracking.UnmovableMountainApplied, creature))
+			&& TryMarkPersistentHexApplied(_combatTracking.UnmovableMountainApplied, creature, replayOneShotPowers))
 		{
 			await PowerCmd.Apply<BarricadePower>(creature, 1m, creature, null);
 		}
@@ -100,9 +97,9 @@ internal sealed partial class HextechMayhemModifier
 		await TryApplyServantMasterIllusion(creature, creature, null);
 	}
 
-	private static async Task EnsureMonsterMaxHpBonus(Creature creature, decimal bonusPercent)
+	private static async Task EnsureMonsterMaxHpBonus(Creature creature, decimal bonusPercent, int? baseMaxHpOverride = null)
 	{
-		int baseMaxHp = creature.MonsterMaxHpBeforeModification ?? creature.MaxHp;
+		int baseMaxHp = baseMaxHpOverride ?? creature.MonsterMaxHpBeforeModification ?? creature.MaxHp;
 		int expectedMaxHp = baseMaxHp + (int)Math.Floor(baseMaxHp * bonusPercent);
 		int missingMaxHp = expectedMaxHp - creature.MaxHp;
 		if (missingMaxHp > 0)

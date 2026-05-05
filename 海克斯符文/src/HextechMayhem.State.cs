@@ -161,6 +161,12 @@ internal sealed partial class HextechMayhemModifier
 		InvalidateActiveMonsterHexCache();
 	}
 
+	public void ClearMonsterHexForAct(int actIndex)
+	{
+		_actState.ClearMonsterHex(actIndex);
+		InvalidateActiveMonsterHexCache();
+	}
+
 	public IReadOnlyList<MonsterHexKind> GetActiveMonsterHexes()
 	{
 		EnsureActiveMonsterHexCache();

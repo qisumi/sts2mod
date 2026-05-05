@@ -20,6 +20,7 @@ internal static class AssetHooks
 	public static void Install(Harmony harmony)
 	{
 		MethodInfo getRelicIcon = RequireGetter(typeof(RelicModel), nameof(RelicModel.Icon));
+		MethodInfo getRelicIconOutline = RequireGetter(typeof(RelicModel), nameof(RelicModel.IconOutline));
 		MethodInfo getRelicBigIcon = RequireGetter(typeof(RelicModel), nameof(RelicModel.BigIcon));
 		MethodInfo? relicReload = TryGetMethod(typeof(NRelic), "Reload", BindingFlags.Instance | BindingFlags.NonPublic);
 		MethodInfo getPowerIcon = RequireGetter(typeof(PowerModel), nameof(PowerModel.Icon));
@@ -27,6 +28,7 @@ internal static class AssetHooks
 		MethodInfo getCardPortrait = RequireGetter(typeof(CardModel), nameof(CardModel.Portrait));
 
 		harmony.Patch(getRelicIcon, postfix: new HarmonyMethod(typeof(AssetHooks), nameof(RelicIconPostfix)));
+		harmony.Patch(getRelicIconOutline, postfix: new HarmonyMethod(typeof(AssetHooks), nameof(RelicIconOutlinePostfix)));
 		harmony.Patch(getRelicBigIcon, postfix: new HarmonyMethod(typeof(AssetHooks), nameof(RelicBigIconPostfix)));
 		if (relicReload != null && NRelicModelField != null)
 		{
@@ -50,6 +52,14 @@ internal static class AssetHooks
 	}
 
 	private static void RelicIconPostfix(RelicModel __instance, ref Texture2D __result)
+	{
+		if (TryGetHextechRelicTexture(__instance, out Texture2D? texture))
+		{
+			__result = texture!;
+		}
+	}
+
+	private static void RelicIconOutlinePostfix(RelicModel __instance, ref Texture2D __result)
 	{
 		if (TryGetHextechRelicTexture(__instance, out Texture2D? texture))
 		{

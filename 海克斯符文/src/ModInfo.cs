@@ -8,5 +8,9 @@ internal static class ModInfo
 
     public const string Version = "0.5.3";
 
+#if STS2_104_OR_NEWER
+    public const string TargetGameVersion = "0.104.0";
+#else
     public const string TargetGameVersion = "0.103.2";
+#endif
 }

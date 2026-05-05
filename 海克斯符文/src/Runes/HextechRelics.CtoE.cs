@@ -405,6 +405,11 @@ public sealed class DoomsdayRune : HextechRelicBase
 		HoverTipFactory.FromPower<DoomPower>()
 	];
 
+	public override bool IsAvailableForPlayer(Player player)
+	{
+		return IsNecrobinderPlayer(player);
+	}
+
 	public override async Task AfterPlayerTurnStart(PlayerChoiceContext choiceContext, Player player)
 	{
 		if (player != Owner || Owner.Creature.IsDead || Owner.Creature.CombatState == null)

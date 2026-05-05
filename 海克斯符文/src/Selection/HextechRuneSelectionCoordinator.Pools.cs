@@ -100,6 +100,20 @@ internal static partial class HextechRuneSelectionCoordinator
 		return seenOptionIds;
 	}
 
+	private static RelicModel? CreateMonsterHexRelic(MonsterHexKind? monsterHex)
+	{
+		return monsterHex.HasValue
+			? MonsterHexCatalog.GetIconRelicForMonsterHex(monsterHex.Value).ToMutable()
+			: null;
+	}
+
+	private static HashSet<ModelId> CreateEnemyHexRerollExcludedIds(IEnumerable<RelicModel> options)
+	{
+		return options
+			.Select(static relic => relic.CanonicalInstance?.Id ?? relic.Id)
+			.ToHashSet();
+	}
+
 	private static void MarkRelicsSeen(IEnumerable<RelicModel> relics)
 	{
 		foreach (RelicModel relic in relics)
