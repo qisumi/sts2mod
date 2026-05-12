@@ -1,6 +1,7 @@
+using System.Globalization;
 using System.Reflection;
-using System.Runtime.Loader;
 using Godot;
+using HarmonyLib;
 using MegaCrit.Sts2.addons.mega_text;
 using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Combat;
@@ -10,6 +11,7 @@ using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Entities.Relics;
 using MegaCrit.Sts2.Core.Events;
+using MegaCrit.Sts2.Core.GameActions;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.HoverTips;
@@ -21,10 +23,14 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.CardPools;
 using MegaCrit.Sts2.Core.Models.Cards;
 using MegaCrit.Sts2.Core.Models.Events;
+using MegaCrit.Sts2.Core.Models.Monsters;
+using MegaCrit.Sts2.Core.Models.Powers;
+using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.HoverTips;
 using MegaCrit.Sts2.Core.Nodes.Relics;
+using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Nodes.Screens.InspectScreens;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using MegaCrit.Sts2.Core.Odds;
@@ -37,7 +43,6 @@ using MegaCrit.Sts2.Core.Saves;
 using MegaCrit.Sts2.Core.Saves.Runs;
 using MegaCrit.Sts2.Core.Unlocks;
 using MegaCrit.Sts2.Core.ValueProps;
-using MonoMod.RuntimeDetour;
 
 namespace EndlessMode;
 
@@ -45,68 +50,53 @@ namespace EndlessMode;
 public static class ModEntry
 {
 	private const string ModId = "EndlessMode";
+	private const string HarmonyId = "Natsuki.EndlessMode";
 	private const string ArchitectEventId = "THE_ARCHITECT";
 	private const string EndlessOptionTextKey = "ENDLESS_MODE.enter";
 	private const string EndlessOptionTitleKey = "ENDLESS_MODE.enter.title";
+	private const string HextechMayhemModifierTypeName = "HextechRunes.HextechMayhemModifier";
+	private const string HextechResetForEndlessLoopMethodName = "ResetForEndlessLoop";
+	private const string SeedAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+	private const int EndlessChoiceMagic = 0x454E44;
+	private const int ChoiceKindLoopRewardConfig = 1;
+	private static readonly TimeSpan EndlessTransitionRetryDelay = TimeSpan.FromSeconds(30);
+	private static readonly TimeSpan RemoteEndlessChoiceTimeout = TimeSpan.FromSeconds(20);
 	private static readonly FieldInfo MapPointHistoryField = RequireField(typeof(RunState), "_mapPointHistory");
 	private static readonly FieldInfo VisitedEventIdsField = RequireField(typeof(RunState), "_visitedEventIds");
 	private static readonly MethodInfo RunStateActsSetter = RequirePropertySetter(typeof(RunState), nameof(RunState.Acts), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 	private static readonly MethodInfo RunStateRngSetter = RequirePropertySetter(typeof(RunState), nameof(RunState.Rng), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 	private static readonly MethodInfo RunStateOddsSetter = RequirePropertySetter(typeof(RunState), nameof(RunState.Odds), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 	private static readonly MethodInfo RunStateMapSetter = RequirePropertySetter(typeof(RunState), nameof(RunState.Map), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-	private static readonly FieldInfo RelicInventoryNodesField = RequireField(typeof(NRelicInventory), "_relicNodes");
-	private static readonly FieldInfo InspectRelicScreenUnlockedRelicsField = RequireField(typeof(NInspectRelicScreen), "_allUnlockedRelics");
-	private static readonly FieldInfo InspectRelicScreenRelicsField = RequireField(typeof(NInspectRelicScreen), "_relics");
-	private static readonly FieldInfo InspectRelicScreenIndexField = RequireField(typeof(NInspectRelicScreen), "_index");
+	private static readonly FieldInfo MapScreenBossPointNodeField = RequireField(typeof(NMapScreen), "_bossPointNode");
+	private static readonly FieldInfo MapScreenSecondBossPointNodeField = RequireField(typeof(NMapScreen), "_secondBossPointNode");
+	private static readonly FieldInfo MapScreenStartingPointNodeField = RequireField(typeof(NMapScreen), "_startingPointNode");
+	private static readonly FieldInfo? RelicInventoryNodesField = TryGetField(typeof(NRelicInventory), "_relicNodes");
+	private static readonly FieldInfo? InspectRelicScreenUnlockedRelicsField = TryGetField(typeof(NInspectRelicScreen), "_allUnlockedRelics");
+	private static readonly FieldInfo? InspectRelicScreenRelicsField = TryGetField(typeof(NInspectRelicScreen), "_relics");
+	private static readonly FieldInfo? InspectRelicScreenIndexField = TryGetField(typeof(NInspectRelicScreen), "_index");
 	private static readonly FieldInfo RelicCanonicalInstanceField = RequireField(typeof(RelicModel), "_canonicalInstance");
-	private static readonly MethodInfo InspectRelicScreenUpdateRelicDisplayMethod = RequireMethod(typeof(NInspectRelicScreen), "UpdateRelicDisplay", BindingFlags.Instance | BindingFlags.NonPublic);
-	private static readonly MethodInfo InspectRelicScreenSetRelicMethod = RequireMethod(typeof(NInspectRelicScreen), "SetRelic", BindingFlags.Instance | BindingFlags.NonPublic, typeof(int));
-	private static readonly FieldInfo InspectRelicScreenNameLabelField = RequireField(typeof(NInspectRelicScreen), "_nameLabel");
-	private static readonly FieldInfo InspectRelicScreenRarityLabelField = RequireField(typeof(NInspectRelicScreen), "_rarityLabel");
-	private static readonly FieldInfo InspectRelicScreenDescriptionField = RequireField(typeof(NInspectRelicScreen), "_description");
-	private static readonly FieldInfo InspectRelicScreenFlavorField = RequireField(typeof(NInspectRelicScreen), "_flavor");
-	private static readonly FieldInfo InspectRelicScreenImageField = RequireField(typeof(NInspectRelicScreen), "_relicImage");
-	private static readonly FieldInfo InspectRelicScreenHoverTipRectField = RequireField(typeof(NInspectRelicScreen), "_hoverTipRect");
-	private static readonly MethodInfo InspectRelicScreenSetRarityVisualsMethod = RequireMethod(typeof(NInspectRelicScreen), "SetRarityVisuals", BindingFlags.Instance | BindingFlags.NonPublic, typeof(RelicRarity));
+	private static readonly MethodInfo? InspectRelicScreenUpdateRelicDisplayMethod = TryGetMethod(typeof(NInspectRelicScreen), "UpdateRelicDisplay", BindingFlags.Instance | BindingFlags.NonPublic);
+	private static readonly MethodInfo? InspectRelicScreenSetRelicMethod = TryGetMethod(typeof(NInspectRelicScreen), "SetRelic", BindingFlags.Instance | BindingFlags.NonPublic, typeof(int));
+	private static readonly FieldInfo? InspectRelicScreenNameLabelField = TryGetField(typeof(NInspectRelicScreen), "_nameLabel");
+	private static readonly FieldInfo? InspectRelicScreenRarityLabelField = TryGetField(typeof(NInspectRelicScreen), "_rarityLabel");
+	private static readonly FieldInfo? InspectRelicScreenDescriptionField = TryGetField(typeof(NInspectRelicScreen), "_description");
+	private static readonly FieldInfo? InspectRelicScreenFlavorField = TryGetField(typeof(NInspectRelicScreen), "_flavor");
+	private static readonly FieldInfo? InspectRelicScreenImageField = TryGetField(typeof(NInspectRelicScreen), "_relicImage");
+	private static readonly FieldInfo? InspectRelicScreenHoverTipRectField = TryGetField(typeof(NInspectRelicScreen), "_hoverTipRect");
+	private static readonly MethodInfo? InspectRelicScreenSetRarityVisualsMethod = TryGetMethod(typeof(NInspectRelicScreen), "SetRarityVisuals", BindingFlags.Instance | BindingFlags.NonPublic, typeof(RelicRarity));
 
-	private static Hook? _setEventStateHook;
-	private static Hook? _gainMaxHpHook;
-	private static Hook? _setMaxHpHook;
-	private static Hook? _healHook;
-	private static Hook? _currentMapPointHistoryEntryHook;
-	private static Hook? _unlockStateRelicsHook;
-	private static Hook? _saveManagerIsRelicSeenHook;
-	private static Hook? _createCreatureHook;
-	private static Hook? _addCreatureHook;
-	private static Hook? _inspectRelicScreenOpenHook;
-	private static Hook? _inspectRelicScreenUpdateRelicDisplayHook;
-	private static Hook? _relicInventoryOnRelicClickedHook;
-	private static Hook? _energyIconPrefixHook;
-	private static Hook? _nRelicReloadHook;
-
+	private static Harmony? _harmony;
+	private static bool _hooksInstalled;
 	private static readonly HashSet<Creature> ScaledEnemyCreatures = new();
 	private static readonly Dictionary<string, Texture2D> ManualTextureCache = new();
-
-	private delegate void OrigSetEventState(EventModel self, LocString description, IEnumerable<EventOption> eventOptions);
-	private delegate Task OrigGainMaxHp(Creature creature, decimal amount);
-	private delegate Task<decimal> OrigSetMaxHp(Creature creature, decimal amount);
-	private delegate Task OrigHeal(Creature creature, decimal amount, bool playAnim);
-	private delegate MapPointHistoryEntry? OrigGetCurrentMapPointHistoryEntry(RunState self);
-	private delegate IEnumerable<RelicModel> OrigGetUnlockStateRelics(UnlockState self);
-	private delegate bool OrigIsRelicSeen(SaveManager self, RelicModel relic);
-	private delegate Creature OrigCreateCreature(CombatState self, MonsterModel monster, CombatSide side, string? slot);
-	private delegate void OrigAddCreature(CombatState self, Creature creature);
-	private delegate void OrigInspectRelicScreenOpen(NInspectRelicScreen self, IReadOnlyList<RelicModel> relics, RelicModel relic);
-	private delegate void OrigInspectRelicScreenUpdateRelicDisplay(NInspectRelicScreen self);
-	private delegate void OrigRelicInventoryOnRelicClicked(NRelicInventory self, RelicModel model);
-	private delegate string OrigEnergyIconHelperGetPrefix(AbstractModel model);
-	private delegate void OrigNRelicReload(NRelic self);
+	private static readonly object StartedEndlessTransitionKeysLock = new();
+	private static readonly Dictionary<string, EndlessTransitionRecord> StartedEndlessTransitionKeys = new(StringComparer.Ordinal);
 
 	public static void Initialize()
 	{
-		PreloadDependencyAssemblies();
 		InjectSavedPropertyCaches();
-		InstallHooks();
+		Harmony harmony = _harmony ??= new Harmony(HarmonyId);
+		InstallHooks(harmony);
 		Log.Info("[EndlessMode] Loaded.");
 	}
 
@@ -117,77 +107,130 @@ public static class ModEntry
 		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(HorribleTrophy));
 	}
 
-	private static void PreloadDependencyAssemblies()
+	private static void InstallHooks(Harmony harmony)
 	{
-		Assembly assembly = Assembly.GetExecutingAssembly();
-		string? modDirectory = Path.GetDirectoryName(assembly.Location);
-		if (string.IsNullOrEmpty(modDirectory) || !Directory.Exists(modDirectory))
+		if (_hooksInstalled)
 		{
 			return;
 		}
 
-		string selfPath = assembly.Location;
-		AssemblyLoadContext loadContext = AssemblyLoadContext.GetLoadContext(assembly) ?? AssemblyLoadContext.Default;
-		foreach (string dllPath in Directory.GetFiles(modDirectory, "*.dll"))
-		{
-			if (string.Equals(dllPath, selfPath, StringComparison.OrdinalIgnoreCase))
-			{
-				continue;
-			}
-
-			loadContext.LoadFromAssemblyPath(dllPath);
-		}
-	}
-
-	private static void InstallHooks()
-	{
-		_setEventStateHook = new Hook(
+		harmony.Patch(
 			RequireMethod(typeof(EventModel), "SetEventState", BindingFlags.Instance | BindingFlags.NonPublic, typeof(LocString), typeof(IEnumerable<EventOption>)),
-			SetEventStateDetour);
-		_gainMaxHpHook = new Hook(
+			prefix: new HarmonyMethod(typeof(ModEntry), nameof(SetEventStatePrefix)));
+		harmony.Patch(
 			RequireMethod(typeof(CreatureCmd), nameof(CreatureCmd.GainMaxHp), BindingFlags.Public | BindingFlags.Static, typeof(Creature), typeof(decimal)),
-			GainMaxHpDetour);
-		_setMaxHpHook = new Hook(
+			prefix: new HarmonyMethod(typeof(ModEntry), nameof(GainMaxHpPrefix)));
+		harmony.Patch(
 			RequireMethod(typeof(CreatureCmd), nameof(CreatureCmd.SetMaxHp), BindingFlags.Public | BindingFlags.Static, typeof(Creature), typeof(decimal)),
-			SetMaxHpDetour);
-		_healHook = new Hook(
+			prefix: new HarmonyMethod(typeof(ModEntry), nameof(SetMaxHpPrefix)));
+		harmony.Patch(
 			RequireMethod(typeof(CreatureCmd), nameof(CreatureCmd.Heal), BindingFlags.Public | BindingFlags.Static, typeof(Creature), typeof(decimal), typeof(bool)),
-			HealDetour);
-		_currentMapPointHistoryEntryHook = new Hook(
+			prefix: new HarmonyMethod(typeof(ModEntry), nameof(HealPrefix)));
+		harmony.Patch(
+			RequireMethod(typeof(PowerCmd), nameof(PowerCmd.Apply), BindingFlags.Public | BindingFlags.Static, typeof(PowerModel), typeof(Creature), typeof(decimal), typeof(Creature), typeof(CardModel), typeof(bool)),
+			prefix: new HarmonyMethod(typeof(ModEntry), nameof(PowerCmdApplyPowerPrefix)));
+		harmony.Patch(
 			RequirePropertyGetter(typeof(RunState), nameof(RunState.CurrentMapPointHistoryEntry), BindingFlags.Instance | BindingFlags.Public),
-			GetCurrentMapPointHistoryEntryDetour);
-		_unlockStateRelicsHook = new Hook(
+			prefix: new HarmonyMethod(typeof(ModEntry), nameof(GetCurrentMapPointHistoryEntryPrefix)));
+		harmony.Patch(
+			RequireMethod(typeof(NMapScreen), nameof(NMapScreen.SetMap), BindingFlags.Instance | BindingFlags.Public, typeof(ActMap), typeof(uint), typeof(bool)),
+			prefix: new HarmonyMethod(typeof(ModEntry), nameof(NMapScreenSetMapPrefix)));
+		harmony.Patch(
 			RequirePropertyGetter(typeof(UnlockState), nameof(UnlockState.Relics), BindingFlags.Instance | BindingFlags.Public),
-			GetUnlockStateRelicsDetour);
-		_saveManagerIsRelicSeenHook = new Hook(
+			postfix: new HarmonyMethod(typeof(ModEntry), nameof(GetUnlockStateRelicsPostfix)));
+		harmony.Patch(
 			RequireMethod(typeof(SaveManager), nameof(SaveManager.IsRelicSeen), BindingFlags.Instance | BindingFlags.Public, typeof(RelicModel)),
-			IsRelicSeenDetour);
-		_createCreatureHook = new Hook(
+			prefix: new HarmonyMethod(typeof(ModEntry), nameof(IsRelicSeenPrefix)));
+		harmony.Patch(
 			RequireMethod(typeof(CombatState), nameof(CombatState.CreateCreature), BindingFlags.Instance | BindingFlags.Public, typeof(MonsterModel), typeof(CombatSide), typeof(string)),
-			CreateCreatureDetour);
-		_addCreatureHook = new Hook(
+			postfix: new HarmonyMethod(typeof(ModEntry), nameof(CreateCreaturePostfix)));
+		harmony.Patch(
 			RequireMethod(typeof(CombatState), nameof(CombatState.AddCreature), BindingFlags.Instance | BindingFlags.Public, typeof(Creature)),
-			AddCreatureDetour);
-		_inspectRelicScreenOpenHook = new Hook(
-			RequireMethod(typeof(NInspectRelicScreen), nameof(NInspectRelicScreen.Open), BindingFlags.Instance | BindingFlags.Public, typeof(IReadOnlyList<RelicModel>), typeof(RelicModel)),
-			InspectRelicScreenOpenDetour);
-		_inspectRelicScreenUpdateRelicDisplayHook = new Hook(
-			InspectRelicScreenUpdateRelicDisplayMethod,
-			InspectRelicScreenUpdateRelicDisplayDetour);
-		_relicInventoryOnRelicClickedHook = new Hook(
-			RequireMethod(typeof(NRelicInventory), "OnRelicClicked", BindingFlags.Instance | BindingFlags.NonPublic, typeof(RelicModel)),
-			RelicInventoryOnRelicClickedDetour);
-		_energyIconPrefixHook = new Hook(
+			postfix: new HarmonyMethod(typeof(ModEntry), nameof(AddCreaturePostfix)));
+		InstallInspectRelicScreenHooks(harmony);
+		if (TryGetMethod(typeof(NRelicInventory), "OnRelicClicked", BindingFlags.Instance | BindingFlags.NonPublic, typeof(RelicModel)) is { } relicClickedMethod)
+		{
+			harmony.Patch(
+				relicClickedMethod,
+				prefix: new HarmonyMethod(typeof(ModEntry), nameof(RelicInventoryOnRelicClickedPrefix)));
+		}
+		else
+		{
+			Log.Warn("[EndlessMode][Inspect] NRelicInventory.OnRelicClicked not found; endless relic inspect shortcut disabled.");
+		}
+		harmony.Patch(
 			RequireMethod(typeof(EnergyIconHelper), nameof(EnergyIconHelper.GetPrefix), BindingFlags.Static | BindingFlags.Public, typeof(AbstractModel)),
-			EnergyIconHelperGetPrefixDetour);
-		_nRelicReloadHook = new Hook(
-			RequireMethod(typeof(NRelic), "Reload", BindingFlags.Instance | BindingFlags.NonPublic),
-			NRelicReloadDetour);
+			prefix: new HarmonyMethod(typeof(ModEntry), nameof(EnergyIconHelperGetPrefixPrefix)));
+		if (TryGetMethod(typeof(NRelic), "Reload", BindingFlags.Instance | BindingFlags.NonPublic) is { } relicReloadMethod)
+		{
+			harmony.Patch(
+				relicReloadMethod,
+				postfix: new HarmonyMethod(typeof(ModEntry), nameof(NRelicReloadPostfix)));
+		}
+		else
+		{
+			Log.Warn("[EndlessMode] NRelic.Reload not found; manual relic icon refresh hook disabled.");
+		}
+		harmony.Patch(
+			RequirePropertyGetter(typeof(RelicModel), nameof(RelicModel.Icon), BindingFlags.Instance | BindingFlags.Public),
+			prefix: new HarmonyMethod(typeof(ModEntry), nameof(RelicModelTextureGetterPrefix)));
+		harmony.Patch(
+			RequirePropertyGetter(typeof(RelicModel), nameof(RelicModel.IconOutline), BindingFlags.Instance | BindingFlags.Public),
+			prefix: new HarmonyMethod(typeof(ModEntry), nameof(RelicModelTextureGetterPrefix)));
+		harmony.Patch(
+			RequirePropertyGetter(typeof(RelicModel), nameof(RelicModel.BigIcon), BindingFlags.Instance | BindingFlags.Public),
+			prefix: new HarmonyMethod(typeof(ModEntry), nameof(RelicModelTextureGetterPrefix)));
+		if (TryGetMethod(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen._Ready), BindingFlags.Instance | BindingFlags.Public) is { } characterSelectReadyMethod)
+		{
+			harmony.Patch(
+				characterSelectReadyMethod,
+				postfix: new HarmonyMethod(typeof(EndlessModeConfigUi), nameof(EndlessModeConfigUi.CharacterSelectReadyPostfix)));
+		}
+		else
+		{
+			Log.Warn("[EndlessMode][Config] NCharacterSelectScreen._Ready not found; config window disabled on this build.");
+		}
+		_hooksInstalled = true;
 	}
 
-	private static void SetEventStateDetour(OrigSetEventState orig, EventModel self, LocString description, IEnumerable<EventOption> eventOptions)
+	private static void InstallInspectRelicScreenHooks(Harmony harmony)
 	{
-		orig(self, description, BuildEventOptions(self, eventOptions));
+		MethodInfo? inspectOpenMethod = TryGetMethod(typeof(NInspectRelicScreen), nameof(NInspectRelicScreen.Open), BindingFlags.Instance | BindingFlags.Public, typeof(IReadOnlyList<RelicModel>), typeof(RelicModel));
+		if (!CanPatchInspectRelicScreen(inspectOpenMethod))
+		{
+			Log.Warn("[EndlessMode][Inspect] Inspect relic screen hooks disabled because this game build is missing one or more private UI members.");
+			return;
+		}
+
+		harmony.Patch(
+			inspectOpenMethod!,
+			prefix: new HarmonyMethod(typeof(ModEntry), nameof(InspectRelicScreenOpenPrefix)),
+			postfix: new HarmonyMethod(typeof(ModEntry), nameof(InspectRelicScreenOpenPostfix)));
+		harmony.Patch(
+			InspectRelicScreenUpdateRelicDisplayMethod!,
+			prefix: new HarmonyMethod(typeof(ModEntry), nameof(InspectRelicScreenUpdateRelicDisplayPrefix)));
+	}
+
+	private static bool CanPatchInspectRelicScreen(MethodInfo? inspectOpenMethod)
+	{
+		return inspectOpenMethod != null
+			&& InspectRelicScreenUnlockedRelicsField != null
+			&& InspectRelicScreenRelicsField != null
+			&& InspectRelicScreenIndexField != null
+			&& InspectRelicScreenUpdateRelicDisplayMethod != null
+			&& InspectRelicScreenSetRelicMethod != null
+			&& InspectRelicScreenNameLabelField != null
+			&& InspectRelicScreenRarityLabelField != null
+			&& InspectRelicScreenDescriptionField != null
+			&& InspectRelicScreenFlavorField != null
+			&& InspectRelicScreenImageField != null
+			&& InspectRelicScreenHoverTipRectField != null
+			&& InspectRelicScreenSetRarityVisualsMethod != null;
+	}
+
+	private static void SetEventStatePrefix(EventModel __instance, ref IEnumerable<EventOption> eventOptions)
+	{
+		eventOptions = BuildEventOptions(__instance, eventOptions);
 	}
 
 	private static IEnumerable<EventOption> BuildEventOptions(EventModel eventModel, IEnumerable<EventOption> eventOptions)
@@ -199,27 +242,14 @@ public static class ModEntry
 		}
 
 		Player owner = eventModel.Owner!;
-		if (owner.RunState.Players.Count > 1)
-		{
-			EventOption disabledOption = new(
-				eventModel,
-				null,
-				new LocString("events", EndlessOptionTitleKey),
-				new LocString("events", "ENDLESS_MODE.enter.multiplayer.description"),
-				EndlessOptionTextKey,
-				Array.Empty<IHoverTip>());
-			disabledOption.ThatWontSaveToChoiceHistory();
-			options.Add(disabledOption);
-			return options;
-		}
-
 		int rewardTier = GetNextRewardTier(owner);
 		List<IHoverTip> hoverTips = BuildRewardHoverTips(rewardTier);
+		EndlessTransitionContext? transitionContext = BuildEndlessTransitionContextForCurrentRun();
 		EventOption endlessOption = new(
 			eventModel,
-			() => EnterEndlessModeAsync(eventModel, rewardTier),
+			() => EnterEndlessModeAsync(eventModel, transitionContext),
 			new LocString("events", EndlessOptionTitleKey),
-			new LocString("events", GetEndlessDescriptionKey(rewardTier)),
+			GetEndlessDescription(rewardTier),
 			EndlessOptionTextKey,
 			hoverTips);
 		endlessOption.ThatWontSaveToChoiceHistory();
@@ -242,7 +272,7 @@ public static class ModEntry
 		return !options.Any(option => option.TextKey == EndlessOptionTextKey);
 	}
 
-	private static async Task EnterEndlessModeAsync(EventModel eventModel, int rewardTier)
+	private static async Task EnterEndlessModeAsync(EventModel eventModel, EndlessTransitionContext? capturedTransitionContext)
 	{
 		Player? owner = eventModel.Owner;
 		RunManager? runManager = RunManager.Instance;
@@ -251,34 +281,131 @@ public static class ModEntry
 			return;
 		}
 
-		await AwardLoopRewardsAsync(owner, rewardTier);
-		string loopSeed = SeedHelper.GetRandomSeed(10);
-		PrepareRunForLoop(state, loopSeed);
-		RebuildActsForLoop(state, loopSeed);
-		runManager.GenerateRooms();
-		LogLoopRolls(state, loopSeed);
-		await ClearMapScreenForLoopTransitionAsync();
-		await runManager.EnterAct(0);
+		int nextLoopIndex = capturedTransitionContext?.LoopIndex ?? GetNextLoopIndex(state);
+		if (!IsRunAtArchitectEvent(state))
+		{
+			Log.Info($"[EndlessMode] Ignored stale endless transition request loop={nextLoopIndex} owner={owner.NetId} currentRoom={state.CurrentRoom?.GetType().Name ?? "null"}.");
+			return;
+		}
+
+		string transitionKey = capturedTransitionContext?.Key ?? BuildEndlessTransitionKey(state, nextLoopIndex);
+		if (!TryBeginEndlessTransition(transitionKey, nextLoopIndex, state, out string beginReason))
+		{
+			Log.Info($"[EndlessMode] Ignored duplicate endless transition request loop={nextLoopIndex} owner={owner.NetId} reason={beginReason}.");
+			return;
+		}
+
+		if (beginReason != "started")
+		{
+			Log.Warn($"[EndlessMode] Retrying endless transition loop={nextLoopIndex} owner={owner.NetId} reason={beginReason}.");
+		}
+
+		try
+		{
+			string loopSeed = CreateDeterministicLoopSeed(state, nextLoopIndex);
+			int enabledRewardFlags = await ResolveLoopRewardFlagsAsync(state, runManager, nextLoopIndex);
+			await AwardLoopRewardsAsync(state, enabledRewardFlags, nextLoopIndex);
+			PrepareRunForLoop(state, loopSeed);
+			ResetHextechMayhemForEndlessLoop(state, nextLoopIndex);
+			RebuildActsForLoop(state, loopSeed);
+			runManager.GenerateRooms();
+			LogLoopRolls(state, loopSeed);
+			await WaitForMapTransitionFrameAsync();
+			await runManager.EnterAct(0);
+			CompleteEndlessTransition(transitionKey, nextLoopIndex);
+		}
+		catch (TimeoutException ex)
+		{
+			ForgetEndlessTransition(transitionKey);
+			Log.Warn($"[EndlessMode] Endless transition aborted and can be retried loop={nextLoopIndex} owner={owner.NetId}: {ex.Message}");
+		}
+		catch
+		{
+			ForgetEndlessTransition(transitionKey);
+			throw;
+		}
 	}
 
-	private static async Task AwardLoopRewardsAsync(Player player, int rewardTier)
+	private static async Task<int> ResolveLoopRewardFlagsAsync(RunState state, RunManager runManager, int nextLoopIndex)
 	{
-		await GrantOrIncrementSpearAsync(player);
-		await GrantOrIncrementShieldAsync(player);
+		int localFlags = EndlessModeConfig.GetEnabledRewardFlags();
+		NetGameType gameType = runManager.NetService.Type;
+		if (gameType is NetGameType.Singleplayer or NetGameType.None or NetGameType.Replay)
+		{
+			return localFlags;
+		}
+
+		PlayerChoiceSynchronizer? synchronizer = await WaitForPlayerChoiceSynchronizerAsync(runManager);
+		Player? authorityPlayer = GetLoopRewardConfigAuthorityPlayer(runManager, state);
+		if (synchronizer == null || authorityPlayer == null)
+		{
+			Log.Warn($"[EndlessMode] Loop reward config sync unavailable; using local config loop={nextLoopIndex} flags={localFlags} synchronizer={synchronizer != null} authority={authorityPlayer?.NetId}.");
+			return localFlags;
+		}
+
+		uint choiceId = synchronizer.ReserveChoiceId(authorityPlayer);
+		if (gameType == NetGameType.Host)
+		{
+			synchronizer.SyncLocalChoice(authorityPlayer, choiceId, CreateLoopRewardConfigChoiceResult(nextLoopIndex, localFlags));
+			Log.Info($"[EndlessMode] Loop reward config host sync loop={nextLoopIndex} choiceId={choiceId} authority={authorityPlayer.NetId} flags={localFlags}.");
+			return localFlags;
+		}
+
+		(PlayerChoiceResult remoteChoice, uint receivedChoiceId) = await WaitForRemoteEndlessChoice(
+			synchronizer,
+			authorityPlayer,
+			choiceId,
+			result => TryDecodeLoopRewardConfigChoiceResult(result, nextLoopIndex, out _),
+			$"loop-reward-config loop={nextLoopIndex}");
+		if (!TryDecodeLoopRewardConfigChoiceResult(remoteChoice, nextLoopIndex, out int syncedFlags))
+		{
+			Log.Warn($"[EndlessMode] Loop reward config sync malformed; using local config loop={nextLoopIndex} choiceId={receivedChoiceId} flags={localFlags}.");
+			return localFlags;
+		}
+
+		Log.Info($"[EndlessMode] Loop reward config client sync loop={nextLoopIndex} choiceId={receivedChoiceId} authority={authorityPlayer.NetId} flags={syncedFlags} localFlags={localFlags}.");
+		return syncedFlags;
+	}
+
+	private static async Task AwardLoopRewardsAsync(RunState state, int enabledRewardFlags, int loopIndex)
+	{
+		int rewardTier = Math.Min(loopIndex, 4);
+		foreach (Player player in state.Players)
+		{
+			await AwardLoopRewardsAsync(player, rewardTier, enabledRewardFlags, loopIndex);
+		}
+	}
+
+	private static async Task AwardLoopRewardsAsync(Player player, int rewardTier, int enabledRewardFlags, int loopIndex)
+	{
+		await GrantOrSetStackAsync<PlagueSpear>(player, loopIndex);
+		await GrantOrSetStackAsync<PlagueShield>(player, loopIndex);
 
 		switch (rewardTier)
 		{
 			case 1:
-				await GrantUniqueRelicAsync<MimicInfestation>(player);
+				if (EndlessModeConfig.IsRewardEnabled(enabledRewardFlags, EndlessOptionalReward.MimicInfestation))
+				{
+					await GrantUniqueRelicAsync<MimicInfestation>(player);
+				}
 				break;
 			case 2:
-				await GrantUniqueRelicAsync<TimeMaze>(player);
+				if (EndlessModeConfig.IsRewardEnabled(enabledRewardFlags, EndlessOptionalReward.TimeMaze))
+				{
+					await GrantUniqueRelicAsync<TimeMaze>(player);
+				}
 				break;
 			case 3:
-				await GrantUniqueRelicAsync<Muzzle>(player);
+				if (EndlessModeConfig.IsRewardEnabled(enabledRewardFlags, EndlessOptionalReward.Muzzle))
+				{
+					await GrantUniqueRelicAsync<Muzzle>(player);
+				}
 				break;
 			default:
-				await GrantOrIncrementTrophyAsync(player);
+				if (EndlessModeConfig.IsRewardEnabled(enabledRewardFlags, EndlessOptionalReward.HorribleTrophy))
+				{
+					await GrantOrSetTrophyAsync(player, Math.Max(1, loopIndex - 3));
+				}
 				break;
 		}
 	}
@@ -314,6 +441,69 @@ public static class ModEntry
 		RunStateActsSetter.Invoke(state, new object[] { rebuiltActs });
 	}
 
+	private static string CreateDeterministicLoopSeed(RunState state, int nextLoopIndex)
+	{
+		string actIds = string.Join(",", state.Acts.Select(static act => act.Id.Entry));
+		string basis = string.Join(
+			"|",
+			state.Rng.StringSeed ?? string.Empty,
+			nextLoopIndex.ToString(CultureInfo.InvariantCulture),
+			state.Players.Count.ToString(CultureInfo.InvariantCulture),
+			state.CurrentActIndex.ToString(CultureInfo.InvariantCulture),
+			actIds);
+		uint high = (uint)StringHelper.GetDeterministicHashCode(basis);
+		uint low = (uint)StringHelper.GetDeterministicHashCode(basis + "|EndlessMode");
+		return ToSeedString(((ulong)high << 32) | low);
+	}
+
+	private static string ToSeedString(ulong value)
+	{
+		char[] seed = new char[10];
+		for (int index = 0; index < seed.Length; index++)
+		{
+			seed[index] = SeedAlphabet[(int)(value % (ulong)SeedAlphabet.Length)];
+			value /= (ulong)SeedAlphabet.Length;
+		}
+
+		return new string(seed);
+	}
+
+	private static void ResetHextechMayhemForEndlessLoop(RunState state, int nextLoopIndex)
+	{
+		foreach (object modifier in state.Modifiers)
+		{
+			Type modifierType = modifier.GetType();
+			if (!string.Equals(modifierType.FullName, HextechMayhemModifierTypeName, StringComparison.Ordinal))
+			{
+				continue;
+			}
+
+			MethodInfo? resetMethod = modifierType.GetMethod(
+				HextechResetForEndlessLoopMethodName,
+				BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+				binder: null,
+				types: new[] { typeof(string) },
+				modifiers: null);
+			if (resetMethod == null)
+			{
+				Log.Warn("[EndlessMode] HextechRunes endless reset skipped: ResetForEndlessLoop(string) not found.");
+				return;
+			}
+
+			try
+			{
+				resetMethod.Invoke(modifier, new object[] { $"EndlessMode loop {nextLoopIndex.ToString(CultureInfo.InvariantCulture)}" });
+				Log.Info($"[EndlessMode] Reset HextechRunes endless loop state loop={nextLoopIndex}.");
+			}
+			catch (Exception ex)
+			{
+				Log.Warn($"[EndlessMode] HextechRunes endless reset failed: {ex}");
+			}
+
+			return;
+		}
+	}
+
 	private static void LogLoopRolls(RunState state, string loopSeed)
 	{
 		string summary = string.Join(
@@ -325,22 +515,14 @@ public static class ModEntry
 		Log.Info($"[EndlessMode] Prepared endless loop seed={loopSeed} {summary}");
 	}
 
-	private static async Task ClearMapScreenForLoopTransitionAsync()
+	private static async Task WaitForMapTransitionFrameAsync()
 	{
-		NMapScreen? mapScreen = NMapScreen.Instance;
-		if (mapScreen == null || !GodotObject.IsInstanceValid(mapScreen))
-		{
-			return;
-		}
-
-		mapScreen.QueueFree();
 		if (NGame.Instance != null && GodotObject.IsInstanceValid(NGame.Instance))
 		{
 			await NodeUtil.AwaitProcessFrame(NGame.Instance);
-			await NodeUtil.AwaitProcessFrame(NGame.Instance);
 		}
 
-		Log.Info("[EndlessMode] Freed NMapScreen before endless loop act transition.");
+		Log.Info("[EndlessMode] Preserved NMapScreen before endless loop act transition.");
 	}
 
 	private static async Task GrantUniqueRelicAsync<TRelic>(Player player) where TRelic : RelicModel
@@ -353,38 +535,36 @@ public static class ModEntry
 		await RelicCmd.Obtain<TRelic>(player);
 	}
 
-	private static async Task GrantOrIncrementSpearAsync(Player player)
+	private static async Task GrantOrSetStackAsync<TRelic>(Player player, int targetStack) where TRelic : EndlessStackingRelicBase
 	{
-		if (player.Relics.OfType<PlagueSpear>().FirstOrDefault() is { } spear)
+		TRelic? relic = player.Relics.OfType<TRelic>().FirstOrDefault();
+		if (relic == null)
 		{
-			spear.AddStack();
+			await RelicCmd.Obtain<TRelic>(player);
+			relic = player.Relics.OfType<TRelic>().FirstOrDefault();
+		}
+
+		relic?.EnsureStackCount(targetStack);
+	}
+
+	private static async Task GrantOrSetTrophyAsync(Player player, int targetStack)
+	{
+		HorribleTrophy? trophy = player.Relics.OfType<HorribleTrophy>().FirstOrDefault();
+		int before = trophy?.StackCount ?? 0;
+		await GrantOrSetStackAsync<HorribleTrophy>(player, targetStack);
+		trophy = player.Relics.OfType<HorribleTrophy>().FirstOrDefault();
+		if (trophy == null)
+		{
 			return;
 		}
 
-		await RelicCmd.Obtain<PlagueSpear>(player);
-	}
-
-	private static async Task GrantOrIncrementShieldAsync(Player player)
-	{
-		if (player.Relics.OfType<PlagueShield>().FirstOrDefault() is { } shield)
+		int cursesToAdd = before == 0
+			? Math.Max(0, trophy.StackCount - 1)
+			: Math.Max(0, trophy.StackCount - before);
+		for (int i = 0; i < cursesToAdd; i++)
 		{
-			shield.AddStack();
-			return;
-		}
-
-		await RelicCmd.Obtain<PlagueShield>(player);
-	}
-
-	private static async Task GrantOrIncrementTrophyAsync(Player player)
-	{
-		if (player.Relics.OfType<HorribleTrophy>().FirstOrDefault() is { } trophy)
-		{
-			trophy.AddStack();
 			await GrantEnthralledAsync(player);
-			return;
 		}
-
-		await RelicCmd.Obtain<HorribleTrophy>(player);
 	}
 
 	private static async Task GrantEnthralledAsync(Player player)
@@ -395,6 +575,11 @@ public static class ModEntry
 	private static int GetNextRewardTier(Player player)
 	{
 		return Math.Min(GetCompletedLoopCount(player) + 1, 4);
+	}
+
+	private static int GetNextLoopIndex(RunState state)
+	{
+		return GetCompletedLoopCount(state) + 1;
 	}
 
 	private static List<IHoverTip> BuildRewardHoverTips(int rewardTier)
@@ -408,20 +593,28 @@ public static class ModEntry
 		switch (rewardTier)
 		{
 			case 1:
-				hoverTips.Add(CreateRewardHoverTip(ModelDb.Relic<MimicInfestation>()));
+				AddOptionalRewardHoverTip(hoverTips, EndlessOptionalReward.MimicInfestation, ModelDb.Relic<MimicInfestation>());
 				break;
 			case 2:
-				hoverTips.Add(CreateRewardHoverTip(ModelDb.Relic<TimeMaze>()));
+				AddOptionalRewardHoverTip(hoverTips, EndlessOptionalReward.TimeMaze, ModelDb.Relic<TimeMaze>());
 				break;
 			case 3:
-				hoverTips.Add(CreateRewardHoverTip(ModelDb.Relic<Muzzle>()));
+				AddOptionalRewardHoverTip(hoverTips, EndlessOptionalReward.Muzzle, ModelDb.Relic<Muzzle>());
 				break;
 			default:
-				hoverTips.Add(CreateRewardHoverTip(ModelDb.Relic<HorribleTrophy>()));
+				AddOptionalRewardHoverTip(hoverTips, EndlessOptionalReward.HorribleTrophy, ModelDb.Relic<HorribleTrophy>());
 				break;
 		}
 
 		return hoverTips;
+	}
+
+	private static void AddOptionalRewardHoverTip(List<IHoverTip> hoverTips, EndlessOptionalReward reward, RelicModel relic)
+	{
+		if (EndlessModeConfig.IsRewardEnabled(reward))
+		{
+			hoverTips.Add(CreateRewardHoverTip(relic));
+		}
 	}
 
 	private static HoverTip CreateRewardHoverTip(RelicModel relic)
@@ -432,12 +625,26 @@ public static class ModEntry
 			icon = manualTexture;
 		}
 
-		HoverTip tip = new(relic.Title, relic.DynamicDescription.GetFormattedText(), icon)
+		HoverTip tip = new(relic.Title, GetSafeRelicDescription(relic), icon)
 		{
 			Id = relic.Id.Entry
 		};
 		tip.SetCanonicalModel(relic.CanonicalInstance ?? relic);
 		return tip;
+	}
+
+	private static string GetSafeRelicDescription(RelicModel relic)
+	{
+		if (!IsEndlessRelic(relic))
+		{
+			return relic.DynamicDescription.GetFormattedText();
+		}
+
+		LocString description = new("relics", relic.Id.Entry + ".description");
+		relic.DynamicVars.AddTo(description);
+		description.Add("energyPrefix", "red");
+		description.Add("singleStarIcon", "[img]res://images/packed/sprite_fonts/star_icon.png[/img]");
+		return description.GetFormattedText();
 	}
 
 	private static int GetCompletedLoopCount(Player player)
@@ -447,34 +654,276 @@ public static class ModEntry
 			?? 0;
 	}
 
-	private static string GetEndlessDescriptionKey(int rewardTier)
+	private static int GetCompletedLoopCount(RunState state)
 	{
-		return $"ENDLESS_MODE.enter.{Math.Clamp(rewardTier, 1, 4)}.description";
+		if (state.Players.Count == 0)
+		{
+			return 0;
+		}
+
+		return state.Players.Min(static player => GetCompletedLoopCount(player));
 	}
 
-	private static async Task GainMaxHpDetour(OrigGainMaxHp orig, Creature creature, decimal amount)
+	private static bool TryBeginEndlessTransition(string key, int loopIndex, RunState state, out string reason)
+	{
+		lock (StartedEndlessTransitionKeysLock)
+		{
+			DateTime utcNow = DateTime.UtcNow;
+			if (StartedEndlessTransitionKeys.TryGetValue(key, out EndlessTransitionRecord? existing))
+			{
+				TimeSpan age = utcNow - existing.StartedUtc;
+				if (!existing.Completed && age < EndlessTransitionRetryDelay)
+				{
+					reason = $"transition-in-progress-{age.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture)}s";
+					return false;
+				}
+
+				reason = existing.Completed ? "completed-record-rolled-back" : "stale-in-progress-timeout";
+				StartedEndlessTransitionKeys.Remove(key);
+			}
+			else
+			{
+				reason = "started";
+			}
+
+			StartedEndlessTransitionKeys[key] = new EndlessTransitionRecord(loopIndex, utcNow);
+			return true;
+		}
+	}
+
+	private static void ForgetEndlessTransition(string key)
+	{
+		lock (StartedEndlessTransitionKeysLock)
+		{
+			StartedEndlessTransitionKeys.Remove(key);
+		}
+	}
+
+	private static void CompleteEndlessTransition(string key, int loopIndex)
+	{
+		lock (StartedEndlessTransitionKeysLock)
+		{
+			if (StartedEndlessTransitionKeys.TryGetValue(key, out EndlessTransitionRecord? existing))
+			{
+				existing.MarkCompleted(loopIndex);
+			}
+			else
+			{
+				EndlessTransitionRecord completed = new(loopIndex, DateTime.UtcNow);
+				completed.MarkCompleted(loopIndex);
+				StartedEndlessTransitionKeys[key] = completed;
+			}
+		}
+	}
+
+	private static string BuildEndlessTransitionKey(RunState state, int nextLoopIndex)
+	{
+		return string.Join(
+			"|",
+			state.Rng.StringSeed ?? string.Empty,
+			nextLoopIndex.ToString(CultureInfo.InvariantCulture),
+			state.CurrentActIndex.ToString(CultureInfo.InvariantCulture));
+	}
+
+	private static EndlessTransitionContext? BuildEndlessTransitionContextForCurrentRun()
+	{
+		if (RunManager.Instance?.DebugOnlyGetState() is not RunState state)
+		{
+			return null;
+		}
+
+		int loopIndex = GetNextLoopIndex(state);
+		return new EndlessTransitionContext(BuildEndlessTransitionKey(state, loopIndex), loopIndex);
+	}
+
+	private static bool IsRunAtArchitectEvent(RunState state)
+	{
+		if (state.CurrentRoom is not EventRoom eventRoom)
+		{
+			return false;
+		}
+
+		try
+		{
+			return eventRoom.CanonicalEvent.Id.Entry == ArchitectEventId;
+		}
+		catch (Exception ex) when (IsExpectedGodotLifecycleException(ex))
+		{
+			return false;
+		}
+	}
+
+	private static PlayerChoiceResult CreateLoopRewardConfigChoiceResult(int nextLoopIndex, int enabledRewardFlags)
+	{
+		return PlayerChoiceResult.FromIndexes([EndlessChoiceMagic, ChoiceKindLoopRewardConfig, nextLoopIndex, enabledRewardFlags]);
+	}
+
+	private static bool TryDecodeLoopRewardConfigChoiceResult(PlayerChoiceResult result, int expectedLoopIndex, out int enabledRewardFlags)
+	{
+		enabledRewardFlags = 0;
+		if (!TryGetIndexPayload(result, out List<int>? indexes)
+			|| indexes.Count < 4
+			|| indexes[0] != EndlessChoiceMagic
+			|| indexes[1] != ChoiceKindLoopRewardConfig
+			|| indexes[2] != expectedLoopIndex)
+		{
+			return false;
+		}
+
+		enabledRewardFlags = Math.Max(0, indexes[3]);
+		return true;
+	}
+
+	private static async Task<PlayerChoiceSynchronizer?> WaitForPlayerChoiceSynchronizerAsync(RunManager runManager)
+	{
+		for (int i = 0; i < 60; i++)
+		{
+			if (runManager.PlayerChoiceSynchronizer != null)
+			{
+				return runManager.PlayerChoiceSynchronizer;
+			}
+
+			await Task.Yield();
+		}
+
+		return runManager.PlayerChoiceSynchronizer;
+	}
+
+	private static Player? GetLoopRewardConfigAuthorityPlayer(RunManager runManager, RunState state)
+	{
+		if (runManager.NetService.Type == NetGameType.Host)
+		{
+			return state.Players.FirstOrDefault(player => player.NetId == runManager.NetService.NetId)
+				?? state.Players.FirstOrDefault();
+		}
+
+		return state.Players.FirstOrDefault();
+	}
+
+	private static async Task<(PlayerChoiceResult Result, uint ChoiceId)> WaitForRemoteEndlessChoice(
+		PlayerChoiceSynchronizer synchronizer,
+		Player player,
+		uint initialChoiceId,
+		Func<PlayerChoiceResult, bool> isExpected,
+		string context)
+	{
+		uint choiceId = initialChoiceId;
+		int skipped = 0;
+		while (true)
+		{
+			Task<PlayerChoiceResult> remoteChoiceTask = synchronizer.WaitForRemoteChoice(player, choiceId);
+			Task finishedTask = await Task.WhenAny(remoteChoiceTask, Task.Delay(RemoteEndlessChoiceTimeout));
+			if (!ReferenceEquals(finishedTask, remoteChoiceTask))
+			{
+				throw new TimeoutException($"Timed out waiting for endless multiplayer choice context={context} player={player.NetId} choiceId={choiceId} timeout={RemoteEndlessChoiceTimeout.TotalSeconds.ToString("0", CultureInfo.InvariantCulture)}s.");
+			}
+
+			PlayerChoiceResult remoteChoice = await remoteChoiceTask;
+			if (isExpected(remoteChoice))
+			{
+				if (skipped > 0)
+				{
+					Log.Info($"[EndlessMode] WaitForRemoteEndlessChoice accepted after skipping foreign choices context={context} player={player.NetId} choiceId={choiceId} skipped={skipped}.");
+				}
+
+				return (remoteChoice, choiceId);
+			}
+
+			skipped++;
+			Log.Warn($"[EndlessMode] WaitForRemoteEndlessChoice skipped non-endless choice context={context} player={player.NetId} choiceId={choiceId} skipped={skipped} type={remoteChoice.ChoiceType} result={remoteChoice}.");
+			choiceId = synchronizer.ReserveChoiceId(player);
+		}
+	}
+
+	private static bool TryGetIndexPayload(PlayerChoiceResult result, out List<int> payload)
+	{
+		payload = [];
+		try
+		{
+			List<int>? indexes = result.AsIndexes();
+			if (indexes == null)
+			{
+				return false;
+			}
+
+			payload = indexes;
+			return true;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private static LocString GetEndlessDescription(int rewardTier)
+	{
+		LocString description = new("events", "ENDLESS_MODE.enter.description");
+		description.Add("optional_reward", GetOptionalRewardDescription(rewardTier));
+		return description;
+	}
+
+	private static string GetOptionalRewardDescription(int rewardTier)
+	{
+		EndlessOptionalReward reward = EndlessModeConfig.GetOptionalRewardForTier(rewardTier);
+		if (!EndlessModeConfig.IsRewardEnabled(reward))
+		{
+			return string.Empty;
+		}
+
+		string key = reward switch
+		{
+			EndlessOptionalReward.MimicInfestation => "ENDLESS_MODE.enter.optional.mimic",
+			EndlessOptionalReward.TimeMaze => "ENDLESS_MODE.enter.optional.time_maze",
+			EndlessOptionalReward.Muzzle => "ENDLESS_MODE.enter.optional.muzzle",
+			EndlessOptionalReward.HorribleTrophy => "ENDLESS_MODE.enter.optional.horrible_trophy",
+			_ => string.Empty
+		};
+		return string.IsNullOrEmpty(key) ? string.Empty : new LocString("events", key).GetFormattedText();
+	}
+
+	private static bool GainMaxHpPrefix(Creature creature, decimal amount, ref Task __result)
 	{
 		if (ShouldPreventMaxHpIncrease(creature, creature.MaxHp + amount))
+		{
+			__result = Task.CompletedTask;
+			return false;
+		}
+
+		return true;
+	}
+
+	private static bool SetMaxHpPrefix(Creature creature, decimal amount, ref Task<decimal> __result)
+	{
+		if (ShouldPreventMaxHpIncrease(creature, amount))
+		{
+			__result = Task.FromResult(0m);
+			return false;
+		}
+
+		return true;
+	}
+
+	private static void HealPrefix(Creature creature, ref decimal amount)
+	{
+		amount = ModifyHealAmount(creature, amount);
+	}
+
+	private static void PowerCmdApplyPowerPrefix(PowerModel power, Creature target, ref decimal amount)
+	{
+		if (amount <= 0m || target.Side != CombatSide.Enemy)
 		{
 			return;
 		}
 
-		await orig(creature, amount);
-	}
-
-	private static async Task<decimal> SetMaxHpDetour(OrigSetMaxHp orig, Creature creature, decimal amount)
-	{
-		if (ShouldPreventMaxHpIncrease(creature, amount))
+		if ((target.Monster is SkulkingColony && power is HardenedShellPower)
+			|| (target.Monster is Exoskeleton && power is HardToKillPower))
 		{
-			return 0m;
+			decimal multiplier = GetEnemyEndlessScalingMultiplier(GetCurrentRunState(target));
+			if (multiplier > 1m)
+			{
+				amount = Math.Ceiling(amount * multiplier);
+			}
 		}
-
-		return await orig(creature, amount);
-	}
-
-	private static async Task HealDetour(OrigHeal orig, Creature creature, decimal amount, bool playAnim)
-	{
-		await orig(creature, ModifyHealAmount(creature, amount), playAnim);
 	}
 
 	private static decimal ModifyHealAmount(Creature creature, decimal amount)
@@ -490,10 +939,10 @@ public static class ModEntry
 			modifiedAmount *= 0.5m;
 		}
 
-		int plagueShieldStackCount = GetPlagueShieldStackCount(GetCurrentRunState(creature));
-		if (creature.Side == CombatSide.Enemy && plagueShieldStackCount > 0)
+		decimal multiplier = GetEnemyEndlessScalingMultiplier(GetCurrentRunState(creature));
+		if (creature.Side == CombatSide.Enemy && multiplier > 1m)
 		{
-			modifiedAmount *= 1m + 0.75m * plagueShieldStackCount;
+			modifiedAmount *= multiplier;
 		}
 
 		return modifiedAmount;
@@ -509,59 +958,67 @@ public static class ModEntry
 		return newMaxHp > creature.MaxHp;
 	}
 
-	private static MapPointHistoryEntry? GetCurrentMapPointHistoryEntryDetour(OrigGetCurrentMapPointHistoryEntry orig, RunState self)
+	private static bool GetCurrentMapPointHistoryEntryPrefix(RunState __instance, ref MapPointHistoryEntry? __result)
 	{
-		if (MapPointHistoryField.GetValue(self) is not List<List<MapPointHistoryEntry>> mapPointHistory)
-		{
-			return orig(self);
-		}
-
-		if (self.CurrentActIndex < 0 || self.CurrentActIndex >= mapPointHistory.Count)
-		{
-			return null;
-		}
-
-		List<MapPointHistoryEntry> currentActHistory = mapPointHistory[self.CurrentActIndex];
-		if (currentActHistory.Count == 0)
-		{
-			return null;
-		}
-
-		return currentActHistory[^1];
-	}
-
-	private static IEnumerable<RelicModel> GetUnlockStateRelicsDetour(OrigGetUnlockStateRelics orig, UnlockState self)
-	{
-		return orig(self).Concat(GetCustomCanonicalRelics()).Distinct();
-	}
-
-	private static bool IsRelicSeenDetour(OrigIsRelicSeen orig, SaveManager self, RelicModel relic)
-	{
-		if (IsEndlessRelic(relic))
+		if (MapPointHistoryField.GetValue(__instance) is not List<List<MapPointHistoryEntry>> mapPointHistory)
 		{
 			return true;
 		}
 
-		return orig(self, relic);
+		if (__instance.CurrentActIndex < 0 || __instance.CurrentActIndex >= mapPointHistory.Count)
+		{
+			__result = null;
+			return false;
+		}
+
+		List<MapPointHistoryEntry> currentActHistory = mapPointHistory[__instance.CurrentActIndex];
+		if (currentActHistory.Count == 0)
+		{
+			__result = null;
+			return false;
+		}
+
+		__result = currentActHistory[^1];
+		return false;
 	}
 
-	private static Creature CreateCreatureDetour(OrigCreateCreature orig, CombatState self, MonsterModel monster, CombatSide side, string? slot)
+	private static void NMapScreenSetMapPrefix(NMapScreen __instance)
 	{
-		Creature creature = orig(self, monster, side, slot);
-		ApplyPlagueShieldScaling(creature, self.RunState);
-		return creature;
+		MapScreenBossPointNodeField.SetValue(__instance, null);
+		MapScreenSecondBossPointNodeField.SetValue(__instance, null);
+		MapScreenStartingPointNodeField.SetValue(__instance, null);
 	}
 
-	private static void AddCreatureDetour(OrigAddCreature orig, CombatState self, Creature creature)
+	private static void GetUnlockStateRelicsPostfix(ref IEnumerable<RelicModel> __result)
 	{
-		orig(self, creature);
-		ApplyPlagueShieldScaling(creature, self.RunState);
+		__result = __result.Concat(GetCustomCanonicalRelics()).Distinct();
 	}
 
-	private static void RelicInventoryOnRelicClickedDetour(OrigRelicInventoryOnRelicClicked orig, NRelicInventory self, RelicModel model)
+	private static bool IsRelicSeenPrefix(RelicModel relic, ref bool __result)
+	{
+		if (IsEndlessRelic(relic))
+		{
+			__result = true;
+			return false;
+		}
+
+		return true;
+	}
+
+	private static void CreateCreaturePostfix(CombatState __instance, Creature __result)
+	{
+		ApplyPlagueShieldScaling(__result, __instance.RunState);
+	}
+
+	private static void AddCreaturePostfix(CombatState __instance, Creature creature)
+	{
+		ApplyPlagueShieldScaling(creature, __instance.RunState);
+	}
+
+	private static bool RelicInventoryOnRelicClickedPrefix(NRelicInventory __instance, RelicModel model)
 	{
 		List<RelicModel> relics = new();
-		if (RelicInventoryNodesField.GetValue(self) is IEnumerable<NRelicInventoryHolder> holders)
+		if (RelicInventoryNodesField?.GetValue(__instance) is IEnumerable<NRelicInventoryHolder> holders)
 		{
 			foreach (NRelicInventoryHolder holder in holders)
 			{
@@ -578,39 +1035,52 @@ public static class ModEntry
 
 		Log.Info($"[EndlessMode][Inspect] Click relic={model.Id.Entry} resolvedIndex={index} list=[{string.Join(", ", relics.Select(static r => r.Id.Entry))}]");
 		NGame.Instance?.GetInspectRelicScreen().Open(relics, relics[index]);
+		return false;
 	}
 
-	private static string EnergyIconHelperGetPrefixDetour(OrigEnergyIconHelperGetPrefix orig, AbstractModel model)
+	private static bool EnergyIconHelperGetPrefixPrefix(AbstractModel model, ref string __result)
 	{
 		if (model is RelicModel relic && IsEndlessRelic(relic))
 		{
-			return "red";
+			__result = "red";
+			return false;
 		}
 
-		return orig(model);
+		return true;
 	}
 
-	private static void NRelicReloadDetour(OrigNRelicReload orig, NRelic self)
+	private static void NRelicReloadPostfix(NRelic __instance)
 	{
-		orig(self);
-		RelicModel? model;
 		try
 		{
-			model = self.Model;
+			RelicModel? model = __instance.Model;
+
+			if (model != null && TryLoadManualTexture(model, out Texture2D? texture) && texture != null)
+			{
+				ApplyManualRelicTexture(__instance, model, texture);
+			}
 		}
 		catch (InvalidOperationException)
 		{
-			return;
 		}
-
-		if (model != null && TryLoadManualTexture(model, out Texture2D? texture) && texture != null)
+		catch (Exception ex) when (IsExpectedGodotLifecycleException(ex))
 		{
-			self.Icon.Texture = texture;
-			self.Outline.Visible = false;
+			Log.Warn($"[EndlessMode][Inspect] Skipped relic texture reload because the node was no longer valid: {ex.GetType().Name}");
 		}
 	}
 
-	private static void InspectRelicScreenOpenDetour(OrigInspectRelicScreenOpen orig, NInspectRelicScreen self, IReadOnlyList<RelicModel> relics, RelicModel relic)
+	private static bool RelicModelTextureGetterPrefix(RelicModel __instance, ref Texture2D __result)
+	{
+		if (TryLoadManualTexture(__instance, out Texture2D? texture) && texture != null)
+		{
+			__result = texture;
+			return false;
+		}
+
+		return true;
+	}
+
+	private static void InspectRelicScreenOpenPrefix(ref IReadOnlyList<RelicModel> relics, RelicModel relic)
 	{
 		List<RelicModel> correctedRelics = relics.ToList();
 		int correctedIndex = correctedRelics.FindIndex(candidate => ReferenceEquals(candidate, relic) || candidate.Id == relic.Id);
@@ -620,18 +1090,27 @@ public static class ModEntry
 			correctedIndex = correctedRelics.Count - 1;
 		}
 
-		orig(self, correctedRelics, correctedRelics[correctedIndex]);
-		EnsureInspectRelicsUnlocked(self, relics);
-		InspectRelicScreenRelicsField.SetValue(self, correctedRelics);
-		InspectRelicScreenSetRelicMethod.Invoke(self, new object[] { correctedIndex });
-		Log.Info($"[EndlessMode][Inspect] Open relic={relic.Id.Entry} correctedIndex={correctedIndex} correctedList=[{string.Join(", ", correctedRelics.Select(static r => r.Id.Entry))}]");
-		InspectRelicScreenUpdateRelicDisplayMethod.Invoke(self, null);
+		relics = correctedRelics;
 	}
 
-	private static void InspectRelicScreenUpdateRelicDisplayDetour(OrigInspectRelicScreenUpdateRelicDisplay orig, NInspectRelicScreen self)
+	private static void InspectRelicScreenOpenPostfix(NInspectRelicScreen __instance, IReadOnlyList<RelicModel> relics, RelicModel relic)
 	{
-		if (InspectRelicScreenRelicsField.GetValue(self) is IReadOnlyList<RelicModel> relics
-			&& InspectRelicScreenIndexField.GetValue(self) is int index
+		EnsureInspectRelicsUnlocked(__instance, relics);
+		int correctedIndex = relics.ToList().FindIndex(candidate => ReferenceEquals(candidate, relic) || candidate.Id == relic.Id);
+		if (correctedIndex >= 0)
+		{
+			InspectRelicScreenRelicsField!.SetValue(__instance, relics);
+			InspectRelicScreenSetRelicMethod!.Invoke(__instance, new object[] { correctedIndex });
+		}
+
+		Log.Info($"[EndlessMode][Inspect] Open relic={relic.Id.Entry} correctedIndex={correctedIndex} correctedList=[{string.Join(", ", relics.Select(static r => r.Id.Entry))}]");
+		InspectRelicScreenUpdateRelicDisplayMethod!.Invoke(__instance, null);
+	}
+
+	private static bool InspectRelicScreenUpdateRelicDisplayPrefix(NInspectRelicScreen __instance)
+	{
+		if (InspectRelicScreenRelicsField?.GetValue(__instance) is IReadOnlyList<RelicModel> relics
+			&& InspectRelicScreenIndexField?.GetValue(__instance) is int index
 			&& index >= 0
 			&& index < relics.Count)
 		{
@@ -639,12 +1118,12 @@ public static class ModEntry
 			if (IsEndlessRelic(relic))
 			{
 				Log.Info($"[EndlessMode][Inspect] Force render relic={relic.Id.Entry} index={index}");
-				RenderEndlessInspect(self, relic);
-				return;
+				RenderEndlessInspect(__instance, relic);
+				return false;
 			}
 		}
 
-		orig(self);
+		return true;
 	}
 
 	private static void ApplyPlagueShieldScaling(Creature creature, IRunState runState)
@@ -655,15 +1134,25 @@ public static class ModEntry
 		}
 
 		int stackCount = GetPlagueShieldStackCount(runState);
-		if (stackCount <= 0)
+		decimal multiplier = GetEnemyEndlessScalingMultiplier(stackCount);
+		if (multiplier <= 1m)
 		{
 			return;
 		}
 
-		decimal multiplier = 1m + 0.75m * stackCount;
 		decimal scaledHp = Math.Ceiling(creature.MaxHp * multiplier);
 		creature.SetMaxHpInternal(scaledHp);
 		creature.SetCurrentHpInternal(scaledHp);
+	}
+
+	private static decimal GetEnemyEndlessScalingMultiplier(IRunState? runState)
+	{
+		return GetEnemyEndlessScalingMultiplier(GetPlagueShieldStackCount(runState));
+	}
+
+	private static decimal GetEnemyEndlessScalingMultiplier(int plagueShieldStackCount)
+	{
+		return 1m + 0.75m * Math.Max(0, plagueShieldStackCount);
 	}
 
 	private static IRunState? GetCurrentRunState(Creature creature)
@@ -698,7 +1187,7 @@ public static class ModEntry
 
 	private static void EnsureInspectRelicsUnlocked(NInspectRelicScreen screen, IReadOnlyList<RelicModel> relics)
 	{
-		if (InspectRelicScreenUnlockedRelicsField.GetValue(screen) is not HashSet<RelicModel> unlockedRelics)
+		if (InspectRelicScreenUnlockedRelicsField?.GetValue(screen) is not HashSet<RelicModel> unlockedRelics)
 		{
 			return;
 		}
@@ -733,20 +1222,20 @@ public static class ModEntry
 
 	private static void RenderEndlessInspect(NInspectRelicScreen screen, RelicModel relic)
 	{
-		MegaLabel nameLabel = (MegaLabel)InspectRelicScreenNameLabelField.GetValue(screen)!;
-		MegaLabel rarityLabel = (MegaLabel)InspectRelicScreenRarityLabelField.GetValue(screen)!;
-		MegaRichTextLabel description = (MegaRichTextLabel)InspectRelicScreenDescriptionField.GetValue(screen)!;
-		MegaRichTextLabel flavor = (MegaRichTextLabel)InspectRelicScreenFlavorField.GetValue(screen)!;
-		TextureRect image = (TextureRect)InspectRelicScreenImageField.GetValue(screen)!;
-		Control hoverTipRect = (Control)InspectRelicScreenHoverTipRectField.GetValue(screen)!;
+		MegaLabel nameLabel = (MegaLabel)InspectRelicScreenNameLabelField!.GetValue(screen)!;
+		MegaLabel rarityLabel = (MegaLabel)InspectRelicScreenRarityLabelField!.GetValue(screen)!;
+		MegaRichTextLabel description = (MegaRichTextLabel)InspectRelicScreenDescriptionField!.GetValue(screen)!;
+		MegaRichTextLabel flavor = (MegaRichTextLabel)InspectRelicScreenFlavorField!.GetValue(screen)!;
+		TextureRect image = (TextureRect)InspectRelicScreenImageField!.GetValue(screen)!;
+		Control hoverTipRect = (Control)InspectRelicScreenHoverTipRectField!.GetValue(screen)!;
 
 		nameLabel.SetTextAutoSize(relic.Title.GetFormattedText());
 		LocString rarityText = new("gameplay_ui", "RELIC_RARITY." + relic.Rarity.ToString().ToUpperInvariant());
 		rarityLabel.SetTextAutoSize(rarityText.GetFormattedText());
 		image.SelfModulate = Colors.White;
-		description.SetTextAutoSize(relic.DynamicDescription.GetFormattedText());
+		description.SetTextAutoSize(GetSafeRelicDescription(relic));
 		flavor.SetTextAutoSize(relic.Flavor.GetFormattedText());
-		InspectRelicScreenSetRarityVisualsMethod.Invoke(screen, new object[] { relic.Rarity });
+		InspectRelicScreenSetRarityVisualsMethod!.Invoke(screen, new object[] { relic.Rarity });
 		Texture2D? texture = relic.BigIcon;
 		if (TryLoadManualTexture(relic, out Texture2D? manualTexture) && manualTexture != null)
 		{
@@ -772,13 +1261,29 @@ public static class ModEntry
 		string path = endlessRelic.PackedIconPath;
 		if (ManualTextureCache.TryGetValue(path, out Texture2D? cachedTexture))
 		{
-			texture = cachedTexture;
+			if (IsTextureUsable(cachedTexture))
+			{
+				texture = cachedTexture;
+				return true;
+			}
+
+			ManualTextureCache.Remove(path);
+		}
+
+		string resourceName = endlessRelic.EmbeddedIconResourceName;
+		if (TryLoadEmbeddedTexture(resourceName, out texture) && texture != null)
+		{
+			ManualTextureCache[path] = texture;
 			return true;
 		}
 
 		try
 		{
-			texture = ResourceLoader.Load<Texture2D>(path, cacheMode: ResourceLoader.CacheMode.Reuse);
+			if (ResourceLoader.Exists(path))
+			{
+				texture = ResourceLoader.Load<Texture2D>(path, cacheMode: ResourceLoader.CacheMode.Reuse);
+			}
+
 			if (texture == null)
 			{
 				string absolutePath = ProjectSettings.GlobalizePath(path);
@@ -804,6 +1309,132 @@ public static class ModEntry
 		}
 	}
 
+	private static bool TryLoadEmbeddedTexture(string resourceName, out Texture2D? texture)
+	{
+		texture = null;
+		try
+		{
+			using Stream? stream = typeof(ModEntry).Assembly.GetManifestResourceStream(resourceName);
+			if (stream == null)
+			{
+				return false;
+			}
+
+			using MemoryStream buffer = new();
+			stream.CopyTo(buffer);
+			Image image = new();
+			Error error = image.LoadPngFromBuffer(buffer.ToArray());
+			if (error != Error.Ok)
+			{
+				Log.Warn($"[EndlessMode][Inspect] Embedded texture load failed for {resourceName}: {error}.");
+				return false;
+			}
+
+			texture = ImageTexture.CreateFromImage(image);
+			return true;
+		}
+		catch (Exception ex)
+		{
+			Log.Warn($"[EndlessMode][Inspect] Embedded texture load failed for {resourceName}: {ex.Message}");
+			return false;
+		}
+	}
+
+	private static void ApplyManualRelicTexture(NRelic relicNode, RelicModel model, Texture2D texture)
+	{
+		if (model is not EndlessRelicBase endlessRelic)
+		{
+			return;
+		}
+
+		string path = endlessRelic.PackedIconPath;
+		if (!TryApplyManualRelicTexture(relicNode, texture, path))
+		{
+			ManualTextureCache.Remove(path);
+			if (TryLoadManualTexture(model, out Texture2D? freshTexture) && freshTexture != null)
+			{
+				TryApplyManualRelicTexture(relicNode, freshTexture, path);
+			}
+		}
+	}
+
+	private static bool TryApplyManualRelicTexture(NRelic relicNode, Texture2D texture, string path)
+	{
+		try
+		{
+			if (!IsTextureUsable(texture))
+			{
+				ManualTextureCache.Remove(path);
+				return false;
+			}
+
+			if (relicNode.Icon is not { } icon)
+			{
+				return false;
+			}
+
+			icon.Texture = texture;
+			if (relicNode.Outline is { } outline)
+			{
+				outline.Visible = false;
+			}
+			return true;
+		}
+		catch (Exception ex) when (IsExpectedGodotLifecycleException(ex))
+		{
+			ManualTextureCache.Remove(path);
+			return false;
+		}
+	}
+
+	private static bool IsTextureUsable(Texture2D texture)
+	{
+		try
+		{
+			return GodotObject.IsInstanceValid(texture) && texture.GetWidth() > 0;
+		}
+		catch (ObjectDisposedException)
+		{
+			return false;
+		}
+		catch (InvalidOperationException)
+		{
+			return false;
+		}
+		catch (NullReferenceException)
+		{
+			return false;
+		}
+	}
+
+	private static bool IsExpectedGodotLifecycleException(Exception ex)
+	{
+		return ex is InvalidOperationException or ObjectDisposedException or NullReferenceException;
+	}
+
+	private readonly record struct EndlessTransitionContext(string Key, int LoopIndex);
+
+	private sealed class EndlessTransitionRecord
+	{
+		public EndlessTransitionRecord(int loopIndex, DateTime startedUtc)
+		{
+			LoopIndex = loopIndex;
+			StartedUtc = startedUtc;
+		}
+
+		public int LoopIndex { get; private set; }
+
+		public DateTime StartedUtc { get; }
+
+		public bool Completed { get; private set; }
+
+		public void MarkCompleted(int loopIndex)
+		{
+			LoopIndex = loopIndex;
+			Completed = true;
+		}
+	}
+
 	private static IEnumerable<RelicModel> GetCustomCanonicalRelics()
 	{
 		yield return ModelDb.Relic<PlagueSpear>();
@@ -816,7 +1447,7 @@ public static class ModEntry
 
 	private static MethodInfo RequireMethod(Type type, string name, BindingFlags flags, params Type[] parameters)
 	{
-		MethodInfo? method = type.GetMethod(name, flags, binder: null, parameters, modifiers: null);
+		MethodInfo? method = TryGetMethod(type, name, flags, parameters);
 		if (method == null)
 		{
 			throw new InvalidOperationException($"Could not find required method {type.FullName}.{name}.");
@@ -825,15 +1456,25 @@ public static class ModEntry
 		return method;
 	}
 
+	private static MethodInfo? TryGetMethod(Type type, string name, BindingFlags flags, params Type[] parameters)
+	{
+		return type.GetMethod(name, flags, binder: null, parameters, modifiers: null);
+	}
+
 	private static MethodInfo RequirePropertyGetter(Type type, string propertyName, BindingFlags flags)
 	{
-		MethodInfo? getter = type.GetProperty(propertyName, flags)?.GetMethod;
+		MethodInfo? getter = TryGetPropertyGetter(type, propertyName, flags);
 		if (getter == null)
 		{
 			throw new InvalidOperationException($"Could not find required getter {type.FullName}.{propertyName}.");
 		}
 
 		return getter;
+	}
+
+	private static MethodInfo? TryGetPropertyGetter(Type type, string propertyName, BindingFlags flags)
+	{
+		return type.GetProperty(propertyName, flags)?.GetMethod;
 	}
 
 	private static MethodInfo RequirePropertySetter(Type type, string propertyName, BindingFlags flags)
@@ -849,13 +1490,18 @@ public static class ModEntry
 
 	private static FieldInfo RequireField(Type type, string name)
 	{
-		FieldInfo? field = type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+		FieldInfo? field = TryGetField(type, name);
 		if (field == null)
 		{
 			throw new InvalidOperationException($"Could not find required field {type.FullName}.{name}.");
 		}
 
 		return field;
+	}
+
+	private static FieldInfo? TryGetField(Type type, string name)
+	{
+		return type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
 	}
 
 }
@@ -872,6 +1518,8 @@ public abstract class EndlessRelicBase : RelicModel
 	public override RelicRarity Rarity => RelicRarity.Event;
 
 	public override string PackedIconPath => $"res://{ModEntryConstants.ModId}/images/relics/{_iconFileName}";
+
+	public string EmbeddedIconResourceName => $"{ModEntryConstants.ModId}.images.relics.{_iconFileName}";
 
 	protected override string PackedIconOutlinePath => PackedIconPath;
 
@@ -891,13 +1539,7 @@ public abstract class EndlessStackingRelicBase : EndlessRelicBase
 		get => StackCount;
 		set
 		{
-			int target = Math.Max(1, value);
-			while (StackCount < target)
-			{
-				IncrementStackCount();
-			}
-
-			InvokeDisplayAmountChanged();
+			EnsureStackCount(value, flash: false);
 		}
 	}
 
@@ -909,9 +1551,28 @@ public abstract class EndlessStackingRelicBase : EndlessRelicBase
 
 	public void AddStack()
 	{
-		IncrementStackCount();
-		InvokeDisplayAmountChanged();
-		Flash();
+		EnsureStackCount(StackCount + 1);
+	}
+
+	public int EnsureStackCount(int targetStack, bool flash = true)
+	{
+		int target = Math.Max(1, targetStack);
+		int before = StackCount;
+		while (StackCount < target)
+		{
+			IncrementStackCount();
+		}
+
+		if (StackCount != before)
+		{
+			InvokeDisplayAmountChanged();
+			if (flash)
+			{
+				Flash();
+			}
+		}
+
+		return StackCount - before;
 	}
 }
 

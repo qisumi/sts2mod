@@ -1,8 +1,20 @@
 {
   "ENDLESS_MODE.enter.title": "Enter Endless Mode",
+  "ENDLESS_MODE.enter.description": "Return to Act 1. Gain [gold]Plague Spear[/gold], [gold]Plague Shield[/gold]{optional_reward}.",
+  "ENDLESS_MODE.enter.optional.mimic": ", and [gold]Mimic Infestation[/gold]",
+  "ENDLESS_MODE.enter.optional.time_maze": ", and [gold]Time Maze[/gold]",
+  "ENDLESS_MODE.enter.optional.muzzle": ", and [gold]Muzzle[/gold]",
+  "ENDLESS_MODE.enter.optional.horrible_trophy": ", and [gold]Horrible Trophy[/gold]",
   "ENDLESS_MODE.enter.multiplayer.description": "Endless mode is not supported in multiplayer.",
   "ENDLESS_MODE.enter.1.description": "Return to Act 1. Gain [gold]Plague Spear[/gold], [gold]Plague Shield[/gold], and [gold]Mimic Infestation[/gold].",
   "ENDLESS_MODE.enter.2.description": "Return to Act 1. Gain [gold]Plague Spear[/gold], [gold]Plague Shield[/gold], and [gold]Time Maze[/gold].",
   "ENDLESS_MODE.enter.3.description": "Return to Act 1. Gain [gold]Plague Spear[/gold], [gold]Plague Shield[/gold], and [gold]Muzzle[/gold].",
-  "ENDLESS_MODE.enter.4.description": "Return to Act 1. Gain [gold]Plague Spear[/gold], [gold]Plague Shield[/gold], and [gold]Horrible Trophy[/gold]."
+  "ENDLESS_MODE.enter.4.description": "Return to Act 1. Gain [gold]Plague Spear[/gold], [gold]Plague Shield[/gold], and [gold]Horrible Trophy[/gold].",
+  "ENDLESS_MODE.config.title": "Endless Mode Config",
+  "ENDLESS_MODE.config.note": "Affects future endless loops only. In multiplayer, the host's config is used. Plague Spear and Plague Shield are always granted.",
+  "ENDLESS_MODE.config.tooltip": "When disabled, future endless loops will not grant this relic at its matching reward tier.",
+  "ENDLESS_MODE.config.mimic": "Grant Mimic Infestation",
+  "ENDLESS_MODE.config.time_maze": "Grant Time Maze",
+  "ENDLESS_MODE.config.muzzle": "Grant Muzzle",
+  "ENDLESS_MODE.config.horrible_trophy": "Grant Horrible Trophy"
 }

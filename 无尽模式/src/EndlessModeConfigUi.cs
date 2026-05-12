@@ -1,0 +1,210 @@
+using Godot;
+using MegaCrit.Sts2.Core.Localization;
+using MegaCrit.Sts2.Core.Logging;
+using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
+
+namespace EndlessMode;
+
+internal static class EndlessModeConfigUi
+{
+	private const string PanelName = "EndlessModeConfigPanel";
+	private static PanelContainer? _draggingPanel;
+	private static Vector2 _dragOffset;
+
+	public static void CharacterSelectReadyPostfix(NCharacterSelectScreen __instance)
+	{
+		try
+		{
+			InstallPanel(__instance);
+		}
+		catch (Exception ex)
+		{
+			Log.Warn($"[{ModEntryConstants.ModId}] Character select config UI failed: {ex}");
+		}
+	}
+
+	private static void InstallPanel(NCharacterSelectScreen characterSelect)
+	{
+		RemoveExistingPanel(characterSelect);
+
+		PanelContainer panel = new()
+		{
+			Name = PanelName,
+			MouseFilter = Control.MouseFilterEnum.Stop,
+			ZIndex = 350,
+			AnchorLeft = 0f,
+			AnchorTop = 0f,
+			AnchorRight = 0f,
+			AnchorBottom = 0f,
+			CustomMinimumSize = new Vector2(432f, 228f),
+			Size = new Vector2(432f, 228f)
+		};
+		ApplyPanelStyle(panel);
+		ConnectDragHandle(panel, panel);
+
+		MarginContainer margin = new()
+		{
+			MouseFilter = Control.MouseFilterEnum.Pass
+		};
+		margin.AddThemeConstantOverride("margin_left", 14);
+		margin.AddThemeConstantOverride("margin_top", 12);
+		margin.AddThemeConstantOverride("margin_right", 14);
+		margin.AddThemeConstantOverride("margin_bottom", 12);
+		panel.AddChild(margin);
+
+		VBoxContainer stack = new()
+		{
+			MouseFilter = Control.MouseFilterEnum.Pass
+		};
+		stack.AddThemeConstantOverride("separation", 5);
+		margin.AddChild(stack);
+
+		Label title = CreateLabel("ENDLESS_MODE.config.title", "无尽模式配置", 19, new Color(0.95f, 0.78f, 0.22f));
+		title.MouseFilter = Control.MouseFilterEnum.Stop;
+		ConnectDragHandle(title, panel);
+		stack.AddChild(title);
+		stack.AddChild(CreateLabel(
+			"ENDLESS_MODE.config.note",
+			"只影响之后进入的新无尽轮次。联机时以房主配置为准。荒疫之矛和荒疫之盾始终获得。",
+			13,
+			new Color(0.92f, 0.88f, 0.76f, 0.9f)));
+
+		stack.AddChild(CreateRewardCheckBox(
+			EndlessOptionalReward.MimicInfestation,
+			"ENDLESS_MODE.config.mimic",
+			"获得遍地宝箱怪"));
+		stack.AddChild(CreateRewardCheckBox(
+			EndlessOptionalReward.TimeMaze,
+			"ENDLESS_MODE.config.time_maze",
+			"获得时间迷宫"));
+		stack.AddChild(CreateRewardCheckBox(
+			EndlessOptionalReward.Muzzle,
+			"ENDLESS_MODE.config.muzzle",
+			"获得嘴套"));
+		stack.AddChild(CreateRewardCheckBox(
+			EndlessOptionalReward.HorribleTrophy,
+			"ENDLESS_MODE.config.horrible_trophy",
+			"获得可怖奖杯"));
+
+		characterSelect.AddChild(panel);
+		characterSelect.MoveChild(panel, characterSelect.GetChildCount() - 1);
+		PlacePanel(panel);
+	}
+
+	private static void PlacePanel(PanelContainer panel)
+	{
+		Vector2 viewportSize = panel.GetViewportRect().Size;
+		Vector2 panelSize = panel.Size;
+		panel.Position = new Vector2(
+			Math.Max(24f, viewportSize.X - panelSize.X - 24f),
+			128f);
+	}
+
+	private static void ConnectDragHandle(Control handle, PanelContainer panel)
+	{
+		handle.Connect(Control.SignalName.GuiInput, Callable.From<InputEvent>(input => OnDragHandleGuiInput(panel, input)));
+	}
+
+	private static void OnDragHandleGuiInput(PanelContainer panel, InputEvent input)
+	{
+		if (input is InputEventMouseButton mouseButton && mouseButton.ButtonIndex == MouseButton.Left)
+		{
+			if (mouseButton.Pressed)
+			{
+				_draggingPanel = panel;
+				_dragOffset = panel.GetGlobalMousePosition() - panel.GlobalPosition;
+				panel.GetViewport().SetInputAsHandled();
+			}
+			else if (ReferenceEquals(_draggingPanel, panel))
+			{
+				_draggingPanel = null;
+				panel.GetViewport().SetInputAsHandled();
+			}
+		}
+		else if (input is InputEventMouseMotion && ReferenceEquals(_draggingPanel, panel))
+		{
+			MovePanel(panel, panel.GetGlobalMousePosition() - _dragOffset);
+			panel.GetViewport().SetInputAsHandled();
+		}
+	}
+
+	private static void MovePanel(PanelContainer panel, Vector2 globalPosition)
+	{
+		Vector2 viewportSize = panel.GetViewportRect().Size;
+		Vector2 panelSize = panel.Size;
+		float maxX = Math.Max(0f, viewportSize.X - panelSize.X);
+		float maxY = Math.Max(0f, viewportSize.Y - panelSize.Y);
+		panel.GlobalPosition = new Vector2(
+			Math.Clamp(globalPosition.X, 0f, maxX),
+			Math.Clamp(globalPosition.Y, 0f, maxY));
+	}
+
+	private static CheckBox CreateRewardCheckBox(EndlessOptionalReward reward, string labelKey, string fallback)
+	{
+		CheckBox checkBox = new()
+		{
+			Text = Text(labelKey, fallback),
+			ButtonPressed = EndlessModeConfig.IsRewardEnabled(reward),
+			MouseFilter = Control.MouseFilterEnum.Stop,
+			FocusMode = Control.FocusModeEnum.All,
+			CustomMinimumSize = new Vector2(360f, 28f),
+			TooltipText = Text("ENDLESS_MODE.config.tooltip", "关闭后，之后进入对应轮次的无尽模式时不会获得该遗物。")
+		};
+		checkBox.AddThemeFontSizeOverride("font_size", 15);
+		checkBox.AddThemeColorOverride("font_color", new Color(0.95f, 0.93f, 0.84f));
+		checkBox.Connect(BaseButton.SignalName.Toggled, Callable.From<bool>(enabled => EndlessModeConfig.SetRewardEnabled(reward, enabled)));
+		return checkBox;
+	}
+
+	private static Label CreateLabel(string key, string fallback, int fontSize, Color color)
+	{
+		Label label = new()
+		{
+			Text = Text(key, fallback),
+			MouseFilter = Control.MouseFilterEnum.Ignore
+		};
+		label.AddThemeFontSizeOverride("font_size", fontSize);
+		label.AddThemeColorOverride("font_color", color);
+		label.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0.72f));
+		label.AddThemeConstantOverride("outline_size", 2);
+		return label;
+	}
+
+	private static void ApplyPanelStyle(PanelContainer panel)
+	{
+		StyleBoxFlat style = new()
+		{
+			BgColor = new Color(0.04f, 0.055f, 0.075f, 0.76f),
+			BorderColor = new Color(0.86f, 0.68f, 0.28f, 0.7f)
+		};
+		style.SetBorderWidthAll(2);
+		style.SetCornerRadiusAll(6);
+		panel.AddThemeStyleboxOverride("panel", style);
+	}
+
+	private static string Text(string key, string fallback)
+	{
+		try
+		{
+			return LocString.Exists("events", key)
+				? new LocString("events", key).GetFormattedText()
+				: fallback;
+		}
+		catch
+		{
+			return fallback;
+		}
+	}
+
+	private static void RemoveExistingPanel(Node mainMenu)
+	{
+		foreach (Node child in mainMenu.GetChildren())
+		{
+			if (child.Name == PanelName)
+			{
+				mainMenu.RemoveChild(child);
+				child.QueueFree();
+			}
+		}
+	}
+}
