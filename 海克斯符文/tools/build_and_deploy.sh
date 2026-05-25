@@ -21,6 +21,7 @@ fi
 REFS_103="$ROOT/versioned-dll-backups/0.103.2/game-refs"
 REFS_104="$ROOT/versioned-dll-backups/0.104.0/game-refs"
 REFS_105="$ROOT/versioned-dll-backups/0.105.1/game-refs"
+REFS_106="$ROOT/versioned-dll-backups/0.106.1/game-refs"
 GAME_RELEASE_INFO="$GAME_APP/Contents/Resources/release_info.json"
 DEFAULT_STS2_TARGET="0.103.2"
 HEXTECH_DEPLOY="${HEXTECH_DEPLOY:-1}"
@@ -57,6 +58,10 @@ fi
 
 HEXTECH_STS2_TARGET="${HEXTECH_STS2_TARGET:-$DEFAULT_STS2_TARGET}"
 case "$HEXTECH_STS2_TARGET" in
+  0.106*)
+    HEXTECH_STS2_TARGET="0.106.1"
+    TARGET_REFS="$REFS_106"
+    ;;
   0.105*)
     HEXTECH_STS2_TARGET="0.105.1"
     TARGET_REFS="$REFS_105"
@@ -77,7 +82,7 @@ esac
 
 if [[ "$HEXTECH_DEPLOY" != "0" ]]; then
   case "$HEXTECH_STS2_TARGET:$CURRENT_GAME_VERSION" in
-    0.103.2:0.103*|0.104.0:0.104*|0.105.1:0.105*|*:)
+    0.103.2:0.103*|0.104.0:0.104*|0.105.1:0.105*|0.106.1:0.106*|*:)
       ;;
     *)
       if [[ "${HEXTECH_ALLOW_VERSION_MISMATCH:-0}" != "1" ]]; then

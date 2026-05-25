@@ -1,5 +1,5 @@
 using System.Reflection;
-using System.Runtime.Loader;
+using HarmonyLib;
 using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Merchant;
@@ -10,13 +10,14 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Enchantments;
 using MegaCrit.Sts2.Core.Random;
 using MegaCrit.Sts2.Core.Runs;
-using DetourHook = MonoMod.RuntimeDetour.Hook;
+using CoreHook = MegaCrit.Sts2.Core.Hooks.Hook;
 
 namespace RewardEnchants;
 
 [ModInitializer(nameof(Initialize))]
 public static class ModEntry
 {
+	private const string HarmonyId = "Natsuki.RewardEnchants";
 	private const decimal EnchantChancePerAct = 0.125m;
 	private const decimal EnchantAmount = 1m;
 	private const string VanillaEnchantmentNamespace = "MegaCrit.Sts2.Core.Models.Enchantments";
@@ -27,88 +28,59 @@ public static class ModEntry
 		typeof(TezcatarasEmber)
 	};
 
-	private static DetourHook? _tryModifyCardRewardOptionsHook;
-	private static DetourHook? _merchantCardPopulateHook;
+	private static Harmony? _harmony;
+	private static bool _hooksInstalled;
 	private static IReadOnlyList<EnchantmentModel>? _vanillaEnchantments;
-
-	private delegate bool OrigTryModifyCardRewardOptions(
-		IRunState runState,
-		Player player,
-		List<CardCreationResult> cardRewardOptions,
-		CardCreationOptions creationOptions,
-		out List<AbstractModel> modifiers);
-	private delegate void OrigMerchantCardPopulate(MerchantCardEntry self);
 
 	public static void Initialize()
 	{
-		PreloadDependencyAssemblies();
-		InstallHooks();
+		Harmony harmony = _harmony ??= new Harmony(HarmonyId);
+		InstallHooks(harmony);
 		Log.Info("[RewardEnchants] Loaded.");
 	}
 
-	private static void PreloadDependencyAssemblies()
+	private static void InstallHooks(Harmony harmony)
 	{
-		Assembly assembly = Assembly.GetExecutingAssembly();
-		string? modDirectory = Path.GetDirectoryName(assembly.Location);
-		if (string.IsNullOrEmpty(modDirectory) || !Directory.Exists(modDirectory))
+		if (_hooksInstalled)
 		{
 			return;
 		}
 
-		string selfPath = assembly.Location;
-		AssemblyLoadContext loadContext = AssemblyLoadContext.GetLoadContext(assembly) ?? AssemblyLoadContext.Default;
-		foreach (string dllPath in Directory.GetFiles(modDirectory, "*.dll"))
-		{
-			if (string.Equals(dllPath, selfPath, StringComparison.OrdinalIgnoreCase))
-			{
-				continue;
-			}
-
-			loadContext.LoadFromAssemblyPath(dllPath);
-		}
-	}
-
-	private static void InstallHooks()
-	{
-		_tryModifyCardRewardOptionsHook = new DetourHook(
+		harmony.Patch(
 			RequireMethod(
-				typeof(MegaCrit.Sts2.Core.Hooks.Hook),
-				nameof(MegaCrit.Sts2.Core.Hooks.Hook.TryModifyCardRewardOptions),
+				typeof(CoreHook),
+				nameof(CoreHook.TryModifyCardRewardOptions),
 				BindingFlags.Static | BindingFlags.Public,
 				typeof(IRunState),
 				typeof(Player),
 				typeof(List<CardCreationResult>),
 				typeof(CardCreationOptions),
 				typeof(List<AbstractModel>).MakeByRefType()),
-			TryModifyCardRewardOptionsDetour);
-		_merchantCardPopulateHook = new DetourHook(
+			postfix: new HarmonyMethod(typeof(ModEntry), nameof(TryModifyCardRewardOptionsPostfix)));
+		harmony.Patch(
 			RequireMethod(typeof(MerchantCardEntry), nameof(MerchantCardEntry.Populate), BindingFlags.Instance | BindingFlags.Public),
-			MerchantCardPopulateDetour);
+			postfix: new HarmonyMethod(typeof(ModEntry), nameof(MerchantCardPopulatePostfix)));
+		_hooksInstalled = true;
 	}
 
-	private static bool TryModifyCardRewardOptionsDetour(
-		OrigTryModifyCardRewardOptions orig,
-		IRunState runState,
+	private static void TryModifyCardRewardOptionsPostfix(
 		Player player,
 		List<CardCreationResult> cardRewardOptions,
 		CardCreationOptions creationOptions,
-		out List<AbstractModel> modifiers)
+		ref bool __result)
 	{
-		bool modified = orig(runState, player, cardRewardOptions, creationOptions, out modifiers);
 		if (!ShouldProcessRewards(cardRewardOptions, creationOptions))
 		{
-			return modified;
+			return;
 		}
 
 		bool enchantedAny = TryEnchantRewardCards(player, creationOptions, cardRewardOptions);
-		return modified || enchantedAny;
+		__result = __result || enchantedAny;
 	}
 
-	private static void MerchantCardPopulateDetour(OrigMerchantCardPopulate orig, MerchantCardEntry self)
+	private static void MerchantCardPopulatePostfix(MerchantCardEntry __instance)
 	{
-		orig(self);
-
-		CardCreationResult? creationResult = self.CreationResult;
+		CardCreationResult? creationResult = __instance.CreationResult;
 		if (creationResult == null)
 		{
 			return;

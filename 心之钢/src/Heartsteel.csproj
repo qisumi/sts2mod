@@ -5,12 +5,7 @@
     <RootNamespace>Heartsteel</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
-
-  <ItemGroup>
-    <PackageReference Include="MonoMod.RuntimeDetour" Version="25.3.4" />
-  </ItemGroup>
 
   <ItemGroup>
     <Reference Include="sts2">
@@ -21,5 +16,15 @@
       <HintPath>/Users/iniad/Library/Application Support/Steam/steamapps/common/Slay the Spire 2/SlayTheSpire2.app/Contents/Resources/data_sts2_macos_arm64/GodotSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>/Users/iniad/Library/Application Support/Steam/steamapps/common/Slay the Spire 2/SlayTheSpire2.app/Contents/Resources/data_sts2_macos_arm64/0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="../assets/images/events/*.png" LogicalName="Heartsteel.images.events.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../assets/images/powers/*.png" LogicalName="Heartsteel.images.powers.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../assets/images/relics/*.png" LogicalName="Heartsteel.images.relics.%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

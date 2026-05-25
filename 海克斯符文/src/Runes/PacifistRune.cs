@@ -32,7 +32,7 @@ public sealed class PacifistRune : HextechRelicBase
 
 	protected override IEnumerable<DynamicVar> CanonicalVars =>
 	[
-		new DynamicVar("SustainMultiplier", 1.3m),
+		new DynamicVar("SustainMultiplier", 1.5m),
 		new PowerVar<DoomPower>(1m)
 	];
 

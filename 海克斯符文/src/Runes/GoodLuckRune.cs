@@ -54,6 +54,7 @@ public sealed class GoodLuckRune : HextechRelicBase
 			return false;
 		}
 
+		CardCmd.Upgrade(rareResult.Card, CardPreviewStyle.None);
 		cardRewardOptions.Add(rareResult);
 		Flash();
 		return true;

@@ -1,6 +1,7 @@
 {
   "KEYSTONE_RUNES_SUBCATEGORY": "[gold]Keystone:[/gold] Rune relics from League of Legends.",
   "KEYSTONE_SELECTION_TITLE": "Choose A Keystone Rune",
+  "KEYSTONE_SELECTION_TITLE_FOR_PLAYER": "Choose A Keystone Rune For {PlayerName}",
   "KEYSTONE_SKIP": "Skip",
   "KEYSTONE_SERIES.PRECISION": "Precision",
   "KEYSTONE_SERIES.DOMINATION": "Domination",

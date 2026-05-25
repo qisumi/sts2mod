@@ -1,8 +1,8 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using System.Runtime.Loader;
 using System.Threading.Tasks;
+using HarmonyLib;
 using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Entities.Gold;
 using MegaCrit.Sts2.Core.Entities.Players;
@@ -14,7 +14,6 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.ValueProps;
-using MonoMod.RuntimeDetour;
 
 namespace Heartsteel;
 
@@ -30,16 +29,17 @@ public sealed class OrnnsForge : EventModel
 
 	protected override IReadOnlyList<EventOption> GenerateInitialOptions()
 	{
+		Player owner = GetOwnerOrThrow();
 		RelicModel fairTradeRelic = ModelDb.Relic<HeartsteelRelic>().ToMutable();
 		RelicModel stealRelic = ModelDb.Relic<HeartsteelRelic>().ToMutable();
 
 		List<EventOption> options =
 		[
 			new EventOption(this, Greet, "ORNNS_FORGE.pages.INITIAL.options.GREET"),
-			(base.Owner.Gold >= TradeGoldCost
+			(owner.Gold >= TradeGoldCost
 				? CreateRelicOptionWithHoverTips(fairTradeRelic, FairTrade, "ORNNS_FORGE.pages.INITIAL.options.FAIR_TRADE")
 				: new EventOption(this, null, "ORNNS_FORGE.pages.INITIAL.options.FAIR_TRADE_LOCKED")),
-			(base.Owner.Creature.CurrentHp >= StealHpLoss + 1
+			(owner.Creature.CurrentHp >= StealHpLoss + 1
 				? CreateRelicOptionWithHoverTips(stealRelic, GrabAndRun, "ORNNS_FORGE.pages.INITIAL.options.GRAB_AND_RUN").ThatDoesDamage(StealHpLoss)
 				: new EventOption(this, null, "ORNNS_FORGE.pages.INITIAL.options.GRAB_AND_RUN_LOCKED"))
 		];
@@ -55,8 +55,7 @@ public sealed class OrnnsForge : EventModel
 	public override IEnumerable<string> GetAssetPaths(IRunState runState)
 	{
 		return base.GetAssetPaths(runState)
-			.Where(static path => path != ModInfo.OrnnsForgePortraitRequestPath)
-			.Append(ModInfo.OrnnsForgePortraitPath);
+			.Where(static path => path != ModInfo.OrnnsForgePortraitRequestPath);
 	}
 
 	private EventOption CreateRelicOptionWithHoverTips(RelicModel relic, Func<Task> onChosen, string textKey)
@@ -66,71 +65,60 @@ public sealed class OrnnsForge : EventModel
 
 	private async Task Greet()
 	{
-		await PlayerCmd.GainGold(GreetingGold, Owner);
+		Player owner = GetOwnerOrThrow();
+		await PlayerCmd.GainGold(GreetingGold, owner);
 		SetEventFinished(L10NLookup("ORNNS_FORGE.pages.GREET.description"));
 	}
 
 	private async Task FairTrade()
 	{
-		await PlayerCmd.LoseGold(TradeGoldCost, Owner, GoldLossType.Spent);
-		await RelicCmd.Obtain<HeartsteelRelic>(Owner);
-		await CreatureCmd.GainMaxHp(Owner.Creature, TradeMaxHpGain);
+		Player owner = GetOwnerOrThrow();
+		await PlayerCmd.LoseGold(TradeGoldCost, owner, GoldLossType.Spent);
+		await RelicCmd.Obtain<HeartsteelRelic>(owner);
+		await CreatureCmd.GainMaxHp(owner.Creature, TradeMaxHpGain);
 		SetEventFinished(L10NLookup("ORNNS_FORGE.pages.FAIR_TRADE.description"));
 	}
 
 	private async Task GrabAndRun()
 	{
-		await CreatureCmd.Damage(new ThrowingPlayerChoiceContext(), Owner.Creature, StealHpLoss, ValueProp.Unblockable | ValueProp.Unpowered, null, null);
-		await RelicCmd.Obtain<HeartsteelRelic>(Owner);
+		Player owner = GetOwnerOrThrow();
+		await CreatureCmd.Damage(new ThrowingPlayerChoiceContext(), owner.Creature, StealHpLoss, ValueProp.Unblockable | ValueProp.Unpowered, null, null);
+		await RelicCmd.Obtain<HeartsteelRelic>(owner);
 		SetEventFinished(L10NLookup("ORNNS_FORGE.pages.GRAB_AND_RUN.description"));
+	}
+
+	private Player GetOwnerOrThrow()
+	{
+		return Owner ?? throw new InvalidOperationException("Ornn's Forge event has no owner.");
 	}
 }
 
 public static class OrnnsForgeRegistration
 {
-	private static Hook? _allSharedEventsHook;
+	private static bool _hooksInstalled;
 
-	private delegate IEnumerable<EventModel> OrigGetAllSharedEvents();
-
-	public static void Install()
+	public static void Install(Harmony harmony)
 	{
-		PreloadDependencyAssemblies();
-		InstallHooks();
+		InstallHooks(harmony);
 		Log.Info("[Heartsteel] Registered Ornn's Forge shared event.");
 	}
 
-	private static void PreloadDependencyAssemblies()
+	private static void InstallHooks(Harmony harmony)
 	{
-		Assembly assembly = Assembly.GetExecutingAssembly();
-		string? modDirectory = Path.GetDirectoryName(assembly.Location);
-		if (string.IsNullOrEmpty(modDirectory) || !Directory.Exists(modDirectory))
+		if (_hooksInstalled)
 		{
 			return;
 		}
 
-		string selfPath = assembly.Location;
-		AssemblyLoadContext loadContext = AssemblyLoadContext.GetLoadContext(assembly) ?? AssemblyLoadContext.Default;
-		foreach (string dllPath in Directory.GetFiles(modDirectory, "*.dll"))
-		{
-			if (string.Equals(dllPath, selfPath, StringComparison.OrdinalIgnoreCase))
-			{
-				continue;
-			}
-
-			loadContext.LoadFromAssemblyPath(dllPath);
-		}
-	}
-
-	private static void InstallHooks()
-	{
 		MethodInfo allSharedEventsGetter = typeof(ModelDb).GetProperty(nameof(ModelDb.AllSharedEvents), BindingFlags.Static | BindingFlags.Public)?.GetMethod
 			?? throw new InvalidOperationException("Could not find ModelDb.AllSharedEvents getter.");
 
-		_allSharedEventsHook = new Hook(allSharedEventsGetter, AllSharedEventsDetour);
+		harmony.Patch(allSharedEventsGetter, postfix: new HarmonyMethod(typeof(OrnnsForgeRegistration), nameof(AllSharedEventsPostfix)));
+		_hooksInstalled = true;
 	}
 
-	private static IEnumerable<EventModel> AllSharedEventsDetour(OrigGetAllSharedEvents orig)
+	private static void AllSharedEventsPostfix(ref IEnumerable<EventModel> __result)
 	{
-		return orig().Concat([ModelDb.Event<OrnnsForge>()]).Distinct();
+		__result = __result.Concat([ModelDb.Event<OrnnsForge>()]).Distinct();
 	}
 }

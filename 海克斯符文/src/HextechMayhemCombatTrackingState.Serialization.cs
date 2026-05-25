@@ -400,6 +400,7 @@ internal sealed partial class HextechMayhemCombatTrackingState
 		public List<uint> DawnTriggered { get; set; } = [];
 		public List<uint> NearDeathFeastTriggered { get; set; } = [];
 		public List<uint> SpeedDemonPending { get; set; } = [];
+		public Dictionary<uint, int> DelayedEnemyHealingBlock { get; set; } = new();
 		public List<uint> DevilsDanceTriggeredThisTurn { get; set; } = [];
 		public List<uint> FinalFormTriggeredThisTurn { get; set; } = [];
 		public List<uint> FeelTheBurnTriggered { get; set; } = [];
@@ -417,6 +418,7 @@ internal sealed partial class HextechMayhemCombatTrackingState
 		public List<uint> DoormakerRealStartApplied { get; set; } = [];
 		public Dictionary<uint, int> TestSubjectPhaseStartApplied { get; set; } = new();
 		public Dictionary<uint, int> TankEngineStacks { get; set; } = new();
+		public Dictionary<uint, int> TankEngineLastAppliedRound { get; set; } = new();
 		public Dictionary<uint, int> ShrinkEngineStacks { get; set; } = new();
 		public Dictionary<uint, int> GetExcitedPending { get; set; } = new();
 		public List<uint> FeelTheBurnPending { get; set; } = [];

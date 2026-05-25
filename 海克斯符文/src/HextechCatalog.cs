@@ -1,4 +1,7 @@
+using System.Collections;
+using System.Reflection;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Models;
 
 namespace HextechRunes;
@@ -129,8 +132,61 @@ internal static partial class HextechCatalog
 		return actIndex switch
 		{
 			0 => !FirstActExcludedRuneTypes.Contains(runeType),
-			2 => !ThirdActExcludedRuneTypes.Contains(runeType),
+			2 => IsEndlessModeLoaded() || !ThirdActExcludedRuneTypes.Contains(runeType),
 			_ => true
 		};
+	}
+
+	private static bool IsEndlessModeLoaded()
+	{
+		foreach (object mod in EnumerateKnownMods())
+		{
+			if (IsLoadedEndlessModeMod(mod))
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private static IEnumerable<object> EnumerateKnownMods()
+	{
+		Type modManagerType = typeof(ModManager);
+		object? mods =
+			modManagerType.GetProperty("LoadedMods", BindingFlags.Public | BindingFlags.Static)?.GetValue(null)
+			?? modManagerType.GetField("_loadedMods", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null)
+			?? modManagerType.GetProperty("AllMods", BindingFlags.Public | BindingFlags.Static)?.GetValue(null)
+			?? modManagerType.GetField("_mods", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null);
+
+		if (mods is not IEnumerable enumerable)
+		{
+			yield break;
+		}
+
+		foreach (object? mod in enumerable)
+		{
+			if (mod != null)
+			{
+				yield return mod;
+			}
+		}
+	}
+
+	private static bool IsLoadedEndlessModeMod(object mod)
+	{
+		Type modType = mod.GetType();
+		object? manifest = modType.GetField("manifest", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(mod)
+			?? modType.GetProperty("manifest", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(mod);
+		string? id = manifest?.GetType().GetField("id", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(manifest) as string
+			?? manifest?.GetType().GetProperty("id", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(manifest) as string;
+		if (!string.Equals(id, "EndlessMode", StringComparison.OrdinalIgnoreCase))
+		{
+			return false;
+		}
+
+		object? wasLoadedValue = modType.GetField("wasLoaded", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(mod)
+			?? modType.GetProperty("wasLoaded", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(mod);
+		return wasLoadedValue is not bool wasLoaded || wasLoaded;
 	}
 }

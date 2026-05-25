@@ -78,5 +78,11 @@ internal enum MonsterHexKind
     Upgrade = 66,
     NearDeathFeast = 67,
     BlueCandleMedkit = 68,
-    TanksShield = 69
+    TanksShield = 69,
+    Zealot = 70,
+    ScaredStiff = 71,
+    GhostForm = 72,
+    SerpentsFang = 73,
+    PandorasBox = 74,
+    ForbiddenGrimoire = 75
 }

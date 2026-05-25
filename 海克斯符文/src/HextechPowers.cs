@@ -11,7 +11,7 @@ using MegaCrit.Sts2.Core.ValueProps;
 
 namespace HextechRunes;
 
-public sealed class HextechBurnPower : PowerModel
+public sealed class HextechBurnPower : HextechPowerBase
 {
 	private const decimal StackDecayPercent = 0.1m;
 	private static int _resolveDepth;
@@ -30,13 +30,14 @@ public sealed class HextechBurnPower : PowerModel
 		}
 
 		int stacks = Amount;
-		int hpLoss = Math.Max(1, (int)Math.Floor(Owner.CurrentHp * stacks / 100m));
+		int percentHpLoss = Math.Max(1, (int)Math.Floor(Owner.CurrentHp * stacks / 100m));
+		int hpLoss = Math.Max(stacks, percentHpLoss);
 		int stackLoss = Math.Max(1, (int)Math.Ceiling(stacks * StackDecayPercent));
 		Flash();
 		try
 		{
 			_resolveDepth++;
-			await CreatureCmd.SetCurrentHp(Owner, Math.Max(0, Owner.CurrentHp - hpLoss));
+			await CreatureCmd.Damage(new ThrowingPlayerChoiceContext(), Owner, hpLoss, ValueProp.Unblockable | ValueProp.Unpowered, null, null);
 		}
 		finally
 		{
@@ -46,6 +47,10 @@ public sealed class HextechBurnPower : PowerModel
 		if (Owner.IsAlive)
 		{
 			await PowerCmd.Apply<HextechBurnPower>(Owner, -stackLoss, null, null);
+		}
+		else
+		{
+			await Cmd.CustomScaledWait(0.1f, 0.25f);
 		}
 	}
 }
@@ -135,7 +140,7 @@ public sealed class HextechAttackReplayPower : PowerModel
 	}
 }
 
-public sealed class HextechTemporarySlowPower : PowerModel, ITemporaryPower
+public sealed class HextechTemporarySlowPower : HextechPowerBase, ITemporaryPower
 {
 	private bool _shouldIgnoreNextInstance;
 

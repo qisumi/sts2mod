@@ -1,4 +1,5 @@
 using MegaCrit.Sts2.Core.Entities.Creatures;
+using MegaCrit.Sts2.Core.Combat;
 
 namespace HextechRunes;
 
@@ -16,14 +17,40 @@ internal static partial class HextechCombatHooks
 		}
 	}
 
-	private static void ActualDamageCommandPrefix(out long __state)
+	private static bool ActualDamageCommandPrefix(IEnumerable<Creature> targets, out long __state, ref Task<IEnumerable<DamageResult>> __result)
 	{
+		if (ShouldSuppressPreCombatEnemyDamage(targets))
+		{
+			__state = 0L;
+			__result = Task.FromResult(Enumerable.Empty<DamageResult>());
+			return false;
+		}
+
 		__state = Interlocked.Increment(ref _nextActualDamageCommandId);
 		long[] current = ActualDamageCommandIds.Value ?? [];
 		long[] next = new long[current.Length + 1];
 		Array.Copy(current, next, current.Length);
 		next[^1] = __state;
 		ActualDamageCommandIds.Value = next;
+		return true;
+	}
+
+	private static bool ShouldSuppressPreCombatEnemyDamage(IEnumerable<Creature> targets)
+	{
+		if (CombatManager.Instance?.IsInProgress == true)
+		{
+			return false;
+		}
+
+		foreach (Creature target in targets)
+		{
+			if (target is { Side: CombatSide.Enemy, CombatState: not null })
+			{
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	private static void ActualDamageCommandPostfix(long __state, ref Task<IEnumerable<DamageResult>> __result)

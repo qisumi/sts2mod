@@ -5,21 +5,34 @@
     <RootNamespace>KeystoneRunes</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <GameRoot>/Users/iniad/Library/Application Support/Steam/steamapps/common/Slay the Spire 2/SlayTheSpire2.app</GameRoot>
+    <VersionedRefsRoot>$(MSBuildThisFileDirectory)../../HextechRunes/versioned-dll-backups</VersionedRefsRoot>
+    <OfficialGameDataDir>$(VersionedRefsRoot)/0.103.2/game-refs</OfficialGameDataDir>
+    <GameDataDir Condition="'$(GameDataDir)' == '' and Exists('$(OfficialGameDataDir)/sts2.dll')">$(OfficialGameDataDir)</GameDataDir>
+    <GameDataDir Condition="'$(GameDataDir)' == ''">$(GameRoot)/Contents/Resources/data_sts2_macos_arm64</GameDataDir>
+    <KeystoneSts2Target Condition="'$(KeystoneSts2Target)' == ''">0.103.2</KeystoneSts2Target>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(KeystoneSts2Target)' == '0.104.0'">
+    <DefineConstants>$(DefineConstants);STS2_104_OR_NEWER</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="MonoMod.RuntimeDetour" Version="25.3.4" />
-  </ItemGroup>
-
-  <ItemGroup>
     <Reference Include="sts2">
-      <HintPath>/Users/iniad/Library/Application Support/Steam/steamapps/common/Slay the Spire 2/SlayTheSpire2.app/Contents/Resources/data_sts2_macos_arm64/sts2.dll</HintPath>
+      <HintPath>$(GameDataDir)/sts2.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="GodotSharp">
-      <HintPath>/Users/iniad/Library/Application Support/Steam/steamapps/common/Slay the Spire 2/SlayTheSpire2.app/Contents/Resources/data_sts2_macos_arm64/GodotSharp.dll</HintPath>
+      <HintPath>$(GameDataDir)/GodotSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(GameDataDir)/0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="../assets/images/relics/*.png" LogicalName="KeystoneRunes.images.relics.%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

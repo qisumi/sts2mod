@@ -29,6 +29,8 @@ internal sealed partial class AiTeammateDummyController
         AccessTools.Method(typeof(RestSiteSynchronizer), "ChooseOption");
     private static readonly MethodInfo? RestSiteTryEnableProceedButtonMethod =
         AccessTools.Method(typeof(NRestSiteRoom), "TryEnableProceedButton");
+    private static readonly MethodInfo? RestSiteProceedButtonReleasedMethod =
+        AccessTools.Method(typeof(NRestSiteRoom), "OnProceedButtonReleased");
     private static readonly FieldInfo? EventPageIndexField =
         AccessTools.Field(typeof(EventSynchronizer), "_pageIndex");
 
@@ -265,12 +267,38 @@ internal sealed partial class AiTeammateDummyController
                     }
 
                     Log.Info($"[AITeammate][Rest] Proceeding from rest site player={PlayerId} roomCount={player.RunState.CurrentRoomCount}");
-                    await UiHelper.Click(liveProceedButton);
-                    await Task.Delay(250);
-                    return AiActionExecutionResult.RetrySoon;
+                    bool pressedDirectly = TryPressRestSiteProceedButton(liveRestSiteRoom, liveProceedButton);
+                    if (!pressedDirectly)
+                    {
+                        await UiHelper.Click(liveProceedButton);
+                    }
+
+                    await Task.Delay(800);
+                    return player.RunState.CurrentRoom is MegaCrit.Sts2.Core.Rooms.RestSiteRoom
+                        ? AiActionExecutionResult.RetrySoon
+                        : AiActionExecutionResult.Completed;
                 },
                 deduplicationKey)
         ];
+    }
+
+    private static bool TryPressRestSiteProceedButton(NRestSiteRoom restSiteRoom, object proceedButton)
+    {
+        if (RestSiteProceedButtonReleasedMethod == null)
+        {
+            return false;
+        }
+
+        try
+        {
+            RestSiteProceedButtonReleasedMethod.Invoke(restSiteRoom, new[] { proceedButton });
+            return true;
+        }
+        catch (Exception exception)
+        {
+            Log.Debug($"[AITeammate][Rest] Direct proceed press failed reason={exception.Message}");
+            return false;
+        }
     }
 
     private static void TryRefreshRestSiteProceedButton(NRestSiteRoom? restSiteRoom, string phase)

@@ -68,7 +68,7 @@ public sealed class TormentorRune : LimitedDebuffProcRelicBase
 		try
 		{
 			_applyingBurnProc = true;
-			await PowerCmd.Apply<HextechBurnPower>(target, 5m, Owner!.Creature, null);
+			await PowerCmd.Apply<HextechBurnPower>(target, 4m, Owner!.Creature, null);
 		}
 		finally
 		{

@@ -44,6 +44,8 @@ internal sealed class CardChoiceEvaluator
         double deckFit = ScoreDeckFit(card, features, context, tuning);
         double needs = ScoreDeckNeeds(card, features, context, tuning);
         double redundancy = ScoreRedundancy(card, features, context, tuning);
+        double priorityPlan = CardRewardPriorityPlanner.ScoreRewardCard(card, context);
+        double guideStrategy = GuideCardRewardPlanner.ScoreRewardCard(card, context);
         double archetypeStrategy = CharacterArchetypePlanner.ScoreRewardCard(card, context);
         double ironcladStrategy = IroncladCharacterStrategy.ScoreRewardCard(card, context);
         double silentStrategy = SilentCharacterStrategy.ScoreRewardCard(card, context);
@@ -52,6 +54,8 @@ internal sealed class CardChoiceEvaluator
         double contextAdjustment = ScoreContext(card, features, context, tuning) +
                                    ScoreRunPhaseStrategy(card, features, context) +
                                    ScoreFutureRewardAwareness(card, context) +
+                                   priorityPlan +
+                                   guideStrategy +
                                    archetypeStrategy +
                                    ironcladStrategy +
                                    silentStrategy +
@@ -84,6 +88,16 @@ internal sealed class CardChoiceEvaluator
         if (contextAdjustment != 0)
         {
             reasons.Add($"context {(contextAdjustment > 0 ? "+" : string.Empty)}{contextAdjustment:F1}");
+        }
+
+        if (priorityPlan != 0)
+        {
+            reasons.Add($"priorityPlan {(priorityPlan > 0 ? "+" : string.Empty)}{priorityPlan:F1}");
+        }
+
+        if (guideStrategy != 0)
+        {
+            reasons.Add($"guideStrategy {(guideStrategy > 0 ? "+" : string.Empty)}{guideStrategy:F1}");
         }
 
         if (archetypeStrategy != 0)

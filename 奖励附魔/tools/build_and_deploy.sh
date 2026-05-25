@@ -1,8 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 
-DOTNET="/opt/homebrew/bin/dotnet"
-ROOT="/Users/iniad/Documents/cs_exercise/sts2mod/奖励附魔"
+ROOT="/Users/iniad/sts2-mods/RewardEnchants"
 FILE_STEM="RewardEnchants"
 MANIFEST_SRC="$ROOT/assets/$FILE_STEM.json"
 GAME_APP="/Users/iniad/Library/Application Support/Steam/steamapps/common/Slay the Spire 2/SlayTheSpire2.app"
@@ -13,7 +12,7 @@ PROJECT_PATH="$ROOT/src/$FILE_STEM.csproj"
 
 rm -rf "$ROOT/src/bin" "$ROOT/src/obj" "$ROOT/dist"
 
-"$DOTNET" build "$PROJECT_PATH" -c Release
+dotnet build "$PROJECT_PATH" -c Release
 
 mkdir -p "$ROOT/dist"
 rm -rf "$MOD_DIR"

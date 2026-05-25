@@ -51,6 +51,37 @@ public sealed class MiserableFateRune : HextechRelicBase
 		return IsNecrobinderPlayer(player);
 	}
 
+	public override async Task BeforeSideTurnStart(PlayerChoiceContext choiceContext, CombatSide side, HextechCombatState combatState)
+	{
+		if (Owner == null || side != Owner.Creature.Side || Owner.Creature.IsDead || Owner.Creature.CombatState == null)
+		{
+			return;
+		}
+
+		Creature[] enemies = Owner.Creature.CombatState.HittableEnemies.ToArray();
+		bool flashed = false;
+		foreach (Creature enemy in enemies)
+		{
+			decimal doom = Math.Max(0m, enemy.GetPowerAmount<DoomPower>());
+			if (doom <= 0m)
+			{
+				continue;
+			}
+
+			if (!flashed)
+			{
+				Flash();
+				flashed = true;
+			}
+
+			await CreatureCmd.Damage(choiceContext, enemy, doom, ValueProp.Unblockable | ValueProp.Unpowered, Owner.Creature, null);
+			if (enemy.GetPower<DoomPower>() is DoomPower remainingDoom)
+			{
+				await HextechPowerCmdCompat.Remove(remainingDoom);
+			}
+		}
+	}
+
 	public override Task BeforeTurnEnd(PlayerChoiceContext choiceContext, CombatSide side)
 	{
 		if (Owner == null || side != Owner.Creature.Side || Owner.Creature.IsDead || Owner.Creature.CombatState == null)

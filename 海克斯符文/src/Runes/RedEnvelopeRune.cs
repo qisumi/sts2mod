@@ -61,7 +61,13 @@ public sealed class RedEnvelopeRune : HextechRelicBase, IHextechSharedCombatVict
 			HextechStableRandom.PlayerKey(Owner),
 			Owner.Relics.Count.ToString()))
 		{
-			room.AddExtraReward(Owner, new GoldReward(20, 50, Owner));
+			HextechGoldRewardHelper.AddStableRangedExtraGoldReward(
+				room,
+				Owner,
+				20,
+				50,
+				"red-envelope-gold",
+				Owner.Relics.Count.ToString());
 		}
 		else
 		{

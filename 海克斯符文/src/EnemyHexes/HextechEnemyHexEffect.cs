@@ -178,6 +178,11 @@ internal abstract class HextechEnemyHexEffect
 		return false;
 	}
 
+	internal virtual CardCreationOptions ModifyCardRewardCreationOptions(HextechEnemyHexContext context, Player player, CardCreationOptions options)
+	{
+		return options;
+	}
+
 	internal virtual bool TryModifyCardRewardOptions(HextechEnemyHexContext context, Player player, List<CardCreationResult> cardRewardOptions, CardCreationOptions creationOptions)
 	{
 		return false;

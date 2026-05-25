@@ -2,31 +2,39 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { spawn } = require("node:child_process");
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number.parseInt(process.env.PORT || "3000", 10);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const PUBLIC_DIR = path.join(__dirname, "public");
 const DERIVED_DIR = path.join(DATA_DIR, "derived");
+const SUMMARY_FILE = path.join(DERIVED_DIR, "summary.json");
+const DERIVED_INDEX_FILE = path.join(DERIVED_DIR, "index.html");
+const REBUILD_LOCK_FILE = path.join(DERIVED_DIR, ".summary-rebuild.lock");
 const LABELS_FILE = path.join(__dirname, "labels.json");
 const LATEST_VERSION_FILE = path.join(PUBLIC_DIR, "latest-version.json");
 const RESULTS_FILE = path.join(DATA_DIR, "run_results.jsonl");
 const MAX_BODY_BYTES = 256 * 1024;
 const MIN_RUN_TIME_FOR_DEFAULT_STATS = 60;
-const parsedDerivedRefreshDelayMs = Number.parseInt(process.env.DERIVED_REFRESH_DELAY_MS || "60000", 10);
+const parsedDerivedRefreshDelayMs = Number.parseInt(process.env.DERIVED_REFRESH_DELAY_MS || "300000", 10);
 const DERIVED_REFRESH_DELAY_MS = Number.isFinite(parsedDerivedRefreshDelayMs) ? parsedDerivedRefreshDelayMs : 60000;
+const parsedSummaryRefreshIntervalMs = Number.parseInt(process.env.SUMMARY_REFRESH_INTERVAL_MS || "300000", 10);
+const SUMMARY_REFRESH_INTERVAL_MS = Number.isFinite(parsedSummaryRefreshIntervalMs) ? parsedSummaryRefreshIntervalMs : 300000;
 const DERIVED_FILE_NAMES = ["summary.json", "runs.csv", "player_runes.csv", "rune_choices.csv", "monster_hexes.csv"];
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(DERIVED_DIR, { recursive: true });
 
 const LABELS = loadLabels();
-const knownRunIds = loadKnownRunIds();
+const isRebuildProcess = process.argv.includes("--rebuild-derived");
+const knownRunIds = isRebuildProcess ? new Set() : loadKnownRunIds();
 const summaryCache = new Map();
 const derivedState = {
   dirty: false,
   rebuilding: false,
   timer: null,
+  interval: null,
   lastBuiltAtMs: 0,
   lastError: null
 };
@@ -201,6 +209,7 @@ async function handleIngest(req, res) {
   fs.appendFileSync(RESULTS_FILE, `${JSON.stringify(record)}\n`, "utf8");
   knownRunIds.add(runId);
   markDerivedDirty();
+  scheduleDerivedRebuild();
   return sendJson(res, 202, { ok: true, duplicate: false, runId });
 }
 
@@ -685,6 +694,143 @@ function buildSummaryData(options = {}) {
   return summary;
 }
 
+function createEmptySummary(versionFilter, recordIndex) {
+  return {
+    generatedAtUtc: new Date().toISOString(),
+    filters: {
+      minRunTimeForDefaultStats: MIN_RUN_TIME_FOR_DEFAULT_STATS,
+      defaultExcludes: ["short_run"],
+      version: versionFilter || "all"
+    },
+    versionFilter: versionFilter || "all",
+    availableVersions: [],
+    raw: {
+      physicalLines: recordIndex.physicalLines,
+      uniqueRuns: 0,
+      totalUniqueRuns: recordIndex.totalUniqueRuns,
+      duplicateLines: recordIndex.duplicateLines,
+      malformedLines: recordIndex.malformedLines
+    },
+    runCount: 0,
+    winCount: 0,
+    winRate: 0,
+    excludedShortRuns: 0,
+    playerRuneRuns: {},
+    playerRuneChoices: {},
+    monsterHexRuns: {},
+    versions: {},
+    netModes: {},
+    characters: {},
+    tables: {
+      playerRuneRuns: [],
+      playerRuneChoices: [],
+      monsterHexRuns: [],
+      versions: [],
+      netModes: [],
+      characters: []
+    }
+  };
+}
+
+function createUnavailableSummary(versionFilter) {
+  const summary = createEmptySummary(versionFilter, {
+    physicalLines: 0,
+    totalUniqueRuns: 0,
+    duplicateLines: 0,
+    malformedLines: 0
+  });
+  summary.generatedAtUtc = null;
+  summary.pendingRefresh = true;
+  return finalizeSummary(summary, []);
+}
+
+function addRecordToSummary(summary, record, recordVersion, isEligible) {
+  summary.raw.uniqueRuns += 1;
+  if (!isEligible) {
+    summary.excludedShortRuns += 1;
+    return;
+  }
+
+  const payload = record.payload || {};
+  const run = payload.run || {};
+  const isVictory = run.isVictory === true;
+  if (isVictory) {
+    summary.winCount += 1;
+  }
+  summary.runCount += 1;
+  addSimpleCounter(summary.versions, recordVersion);
+  addSimpleCounter(summary.netModes, run.netMode || "(unknown)");
+
+  for (const player of payload.players || []) {
+    const character = player.character || "";
+    addSimpleCounter(summary.characters, character || "(unknown)");
+    for (const rune of Array.isArray(player.hextechRunes) ? player.hextechRunes : []) {
+      addCounter(summary.playerRuneRuns, rune, isVictory);
+    }
+  }
+
+  for (const choice of payload.runeChoices || []) {
+    const options = Array.isArray(choice.options) ? choice.options : [];
+    const selected = typeof choice.selected === "string" ? choice.selected : "";
+    for (const option of options) {
+      const isSelected = option === selected;
+      addChoiceCounter(summary.playerRuneChoices, option, "offered", isVictory);
+      if (isSelected) {
+        addChoiceCounter(summary.playerRuneChoices, option, "selected", isVictory);
+      }
+    }
+    if (selected && !options.includes(selected)) {
+      addChoiceCounter(summary.playerRuneChoices, selected, "offered", isVictory);
+      addChoiceCounter(summary.playerRuneChoices, selected, "selected", isVictory);
+    }
+  }
+
+  for (const monsterHex of payload.monsterHexes || []) {
+    addMonsterCounter(summary.monsterHexRuns, monsterHex.hex, isVictory);
+  }
+}
+
+function finalizeSummary(summary, availableVersions) {
+  summary.winRate = pctNumber(summary.winCount, summary.runCount);
+  summary.availableVersions = availableVersions;
+  summary.tables.playerRuneRuns = buildRateRows(summary.playerRuneRuns, "runes");
+  summary.tables.playerRuneChoices = buildChoiceRows(summary.playerRuneChoices, "runes");
+  summary.tables.monsterHexRuns = buildMonsterRows(summary.monsterHexRuns, "monsterHexes");
+  summary.tables.versions = buildCountRows(summary.versions);
+  summary.tables.netModes = buildCountRows(summary.netModes, "netModes");
+  summary.tables.characters = buildCountRows(summary.characters, "characters");
+  return summary;
+}
+
+function buildSummaryBundle() {
+  const recordIndex = buildRecordIndex();
+  const allSummary = createEmptySummary(null, recordIndex);
+  const byVersion = {};
+  const availableVersionCounts = {};
+
+  forEachLatestRecord(recordIndex, (record) => {
+    const recordVersion = getModVersion(record);
+    const isEligible = isDefaultEligible(record);
+    if (!byVersion[recordVersion]) {
+      byVersion[recordVersion] = createEmptySummary(recordVersion, recordIndex);
+    }
+    if (isEligible) {
+      addSimpleCounter(availableVersionCounts, recordVersion);
+    }
+    addRecordToSummary(allSummary, record, recordVersion, isEligible);
+    addRecordToSummary(byVersion[recordVersion], record, recordVersion, isEligible);
+  });
+
+  const availableVersions = buildCountRows(availableVersionCounts);
+  finalizeSummary(allSummary, availableVersions);
+  for (const summary of Object.values(byVersion)) {
+    finalizeSummary(summary, availableVersions);
+  }
+
+  allSummary.versionSummaries = byVersion;
+  return allSummary;
+}
+
 function pctNumber(part, total) {
   return total > 0 ? Number(((part / total) * 100).toFixed(1)) : 0;
 }
@@ -819,12 +965,11 @@ function writeDerivedTables() {
 }
 
 function readDerivedSummary() {
-  const filePath = path.join(DERIVED_DIR, "summary.json");
-  if (!fs.existsSync(filePath)) {
+  if (!fs.existsSync(SUMMARY_FILE)) {
     return null;
   }
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return JSON.parse(fs.readFileSync(SUMMARY_FILE, "utf8"));
   } catch {
     return null;
   }
@@ -835,16 +980,15 @@ function allDerivedFilesExist() {
 }
 
 function derivedFilesAreCurrent() {
-  if (!allDerivedFilesExist()) {
+  if (!fs.existsSync(SUMMARY_FILE)) {
     return false;
   }
   const resultsMtimeMs = fs.existsSync(RESULTS_FILE) ? fs.statSync(RESULTS_FILE).mtimeMs : 0;
-  return DERIVED_FILE_NAMES.every((fileName) => fs.statSync(path.join(DERIVED_DIR, fileName)).mtimeMs >= resultsMtimeMs);
+  return fs.statSync(SUMMARY_FILE).mtimeMs >= resultsMtimeMs;
 }
 
 function markDerivedDirty() {
   derivedState.dirty = true;
-  summaryCache.clear();
 }
 
 function scheduleDerivedRebuild(delayMs = DERIVED_REFRESH_DELAY_MS) {
@@ -857,14 +1001,21 @@ function scheduleDerivedRebuild(delayMs = DERIVED_REFRESH_DELAY_MS) {
     if (!derivedState.dirty && derivedFilesAreCurrent()) {
       return;
     }
-    try {
-      rebuildDerivedTablesNow();
-    } catch (error) {
-      derivedState.lastError = error?.message || String(error);
-      scheduleDerivedRebuild(Math.max(DERIVED_REFRESH_DELAY_MS, 30000));
-    }
+    startDerivedRebuildChild();
   }, safeDelayMs);
   derivedState.timer.unref?.();
+}
+
+function startPeriodicDerivedRefresh() {
+  if (derivedState.interval || SUMMARY_REFRESH_INTERVAL_MS <= 0) {
+    return;
+  }
+  derivedState.interval = setInterval(() => {
+    if (!derivedFilesAreCurrent()) {
+      scheduleDerivedRebuild(0);
+    }
+  }, SUMMARY_REFRESH_INTERVAL_MS);
+  derivedState.interval.unref?.();
 }
 
 function rebuildDerivedTablesNow() {
@@ -877,7 +1028,9 @@ function rebuildDerivedTablesNow() {
   }
   derivedState.rebuilding = true;
   try {
-    const summary = writeDerivedTables();
+    const summary = buildSummaryBundle();
+    writeFileAtomic(SUMMARY_FILE, `${JSON.stringify(summary, null, 2)}\n`);
+    writeFileAtomic(DERIVED_INDEX_FILE, renderIndexHtml(getDefaultDisplayVersion()));
     derivedState.dirty = false;
     derivedState.lastBuiltAtMs = Date.now();
     derivedState.lastError = null;
@@ -887,17 +1040,138 @@ function rebuildDerivedTablesNow() {
   }
 }
 
+function lockLooksStale(lockPath) {
+  try {
+    const ageMs = Date.now() - fs.statSync(lockPath).mtimeMs;
+    return ageMs > 30 * 60 * 1000;
+  } catch {
+    return false;
+  }
+}
+
+function rebuildDerivedTablesWithLock() {
+  fs.mkdirSync(DERIVED_DIR, { recursive: true });
+  let fd = null;
+  try {
+    fd = fs.openSync(REBUILD_LOCK_FILE, "wx");
+  } catch (error) {
+    if (error?.code === "EEXIST" && lockLooksStale(REBUILD_LOCK_FILE)) {
+      fs.rmSync(REBUILD_LOCK_FILE, { force: true });
+      fd = fs.openSync(REBUILD_LOCK_FILE, "wx");
+    } else {
+      return readDerivedSummary();
+    }
+  }
+  try {
+    fs.writeFileSync(fd, `${process.pid}\n${new Date().toISOString()}\n`, "utf8");
+    return rebuildDerivedTablesNow();
+  } finally {
+    if (fd != null) {
+      fs.closeSync(fd);
+    }
+    fs.rmSync(REBUILD_LOCK_FILE, { force: true });
+  }
+}
+
+function startDerivedRebuildChild() {
+  if (derivedState.rebuilding) {
+    return;
+  }
+  derivedState.rebuilding = true;
+  const child = spawn(process.execPath, [__filename, "--rebuild-derived"], {
+    env: process.env,
+    stdio: "ignore"
+  });
+  child.on("exit", (code) => {
+    derivedState.rebuilding = false;
+    if (code === 0) {
+      derivedState.dirty = false;
+      derivedState.lastBuiltAtMs = Date.now();
+      derivedState.lastError = null;
+      summaryCache.clear();
+    } else {
+      derivedState.lastError = `rebuild child exited with code ${code}`;
+      scheduleDerivedRebuild(Math.max(DERIVED_REFRESH_DELAY_MS, 30000));
+    }
+  });
+  child.on("error", (error) => {
+    derivedState.rebuilding = false;
+    derivedState.lastError = error?.message || String(error);
+    scheduleDerivedRebuild(Math.max(DERIVED_REFRESH_DELAY_MS, 30000));
+  });
+  child.unref?.();
+}
+
+function getSummaryFileMtimeMs() {
+  try {
+    return fs.statSync(SUMMARY_FILE).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+function getDerivedStatus() {
+  const summaryMtimeMs = getSummaryFileMtimeMs();
+  const resultsMtimeMs = fs.existsSync(RESULTS_FILE) ? fs.statSync(RESULTS_FILE).mtimeMs : 0;
+  return {
+    summaryExists: summaryMtimeMs > 0,
+    summaryCurrent: summaryMtimeMs >= resultsMtimeMs,
+    summaryGeneratedAtUtc: summaryMtimeMs > 0 ? new Date(summaryMtimeMs).toISOString() : null,
+    resultsUpdatedAtUtc: resultsMtimeMs > 0 ? new Date(resultsMtimeMs).toISOString() : null,
+    refreshIntervalMs: SUMMARY_REFRESH_INTERVAL_MS,
+    scheduled: Boolean(derivedState.timer),
+    rebuilding: derivedState.rebuilding,
+    lastBuiltAtUtc: derivedState.lastBuiltAtMs ? new Date(derivedState.lastBuiltAtMs).toISOString() : null,
+    lastError: derivedState.lastError
+  };
+}
+
+function makeEmptyDerivedVersionSummary(allSummary, versionFilter) {
+  const empty = createEmptySummary(versionFilter, {
+    physicalLines: allSummary.raw?.physicalLines || 0,
+    totalUniqueRuns: allSummary.raw?.totalUniqueRuns || allSummary.raw?.uniqueRuns || 0,
+    duplicateLines: allSummary.raw?.duplicateLines || 0,
+    malformedLines: allSummary.raw?.malformedLines || 0
+  });
+  empty.generatedAtUtc = allSummary.generatedAtUtc;
+  empty.availableVersions = allSummary.availableVersions || allSummary.tables?.versions || [];
+  return finalizeSummary(empty, empty.availableVersions);
+}
+
+function getSummaryFromDerived(versionFilter = null) {
+  const summary = readDerivedSummary();
+  if (!summary) {
+    return null;
+  }
+  const normalizedVersionFilter = normalizeVersionFilter(versionFilter);
+  if (!normalizedVersionFilter) {
+    const { versionSummaries, ...publicSummary } = summary;
+    return publicSummary;
+  }
+  return summary.versionSummaries?.[normalizedVersionFilter] || makeEmptyDerivedVersionSummary(summary, normalizedVersionFilter);
+}
+
 function getSummaryForDisplay(versionFilter = null) {
   const normalizedVersionFilter = normalizeVersionFilter(versionFilter);
-  const resultsMtimeMs = fs.existsSync(RESULTS_FILE) ? fs.statSync(RESULTS_FILE).mtimeMs : 0;
+  const summaryMtimeMs = getSummaryFileMtimeMs();
   const cacheKey = normalizedVersionFilter || "all";
   const cached = summaryCache.get(cacheKey);
-  if (cached && cached.resultsMtimeMs === resultsMtimeMs) {
+  if (cached && cached.summaryMtimeMs === summaryMtimeMs) {
     return cached.summary;
   }
 
-  const summary = buildSummaryData({ version: normalizedVersionFilter });
-  summaryCache.set(cacheKey, { resultsMtimeMs, summary });
+  const derivedSummary = getSummaryFromDerived(normalizedVersionFilter);
+  if (derivedSummary) {
+    if (!derivedFilesAreCurrent()) {
+      scheduleDerivedRebuild();
+    }
+    summaryCache.set(cacheKey, { summaryMtimeMs, summary: derivedSummary });
+    return derivedSummary;
+  }
+
+  scheduleDerivedRebuild(0);
+  const summary = createUnavailableSummary(normalizedVersionFilter);
+  summaryCache.set(cacheKey, { summaryMtimeMs: 0, summary });
   return summary;
 }
 
@@ -1023,8 +1297,13 @@ function renderIndexHtml(versionFilter = null) {
   const indexPath = path.join(PUBLIC_DIR, "index.html");
   let html = fs.readFileSync(indexPath, "utf8");
   const note = buildFilterNote(summary);
+  const generatedAtUtc = summary.generatedAtUtc || "";
+  const updatedText = generatedAtUtc ? `更新时间：${generatedAtUtc}` : "等待生成统计数据";
   const replacements = [
-    [/正在读取数据\.\.\./, `更新时间：${escapeHtml(summary.generatedAtUtc)}`],
+    [
+      /<div class="muted" id="updated"(?: data-generated-at-utc="[^"]*")?>.*?<\/div>/,
+      `<div class="muted" id="updated" data-generated-at-utc="${escapeHtml(generatedAtUtc)}">${escapeHtml(updatedText)}</div>`
+    ],
     [/<select id="versionFilter">\s*<option value="all">全部版本<\/option>\s*<\/select>/, `<select id="versionFilter">${renderVersionOptions(summary, summary.versionFilter, latestVersion)}</select>`],
     [/<b id="eligibleRuns">0<\/b>/, `<b id="eligibleRuns">${summary.runCount}</b>`],
     [/<b id="rawRuns">0<\/b>/, `<b id="rawRuns">${summary.raw.uniqueRuns}</b>`],
@@ -1088,7 +1367,7 @@ function serveStatic(req, res) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   if (req.method === "GET" && url.pathname === "/health") {
-    return sendJson(res, 200, { ok: true, service: "hextech-runes-telemetry", runs: knownRunIds.size });
+    return sendJson(res, 200, { ok: true, service: "hextech-runes-telemetry", runs: knownRunIds.size, derived: getDerivedStatus() });
   }
   if (req.method === "GET" && url.pathname === "/api/hextech-runes/summary") {
     return sendJson(res, 200, getSummaryForDisplay(url.searchParams.get("version")));
@@ -1108,9 +1387,20 @@ const server = http.createServer(async (req, res) => {
   return sendText(res, 405, "method not allowed");
 });
 
-if (!allDerivedFilesExist()) {
+if (isRebuildProcess) {
+  try {
+    rebuildDerivedTablesWithLock();
+    process.exit(0);
+  } catch (error) {
+    console.error(error?.stack || error);
+    process.exit(1);
+  }
+}
+
+if (!derivedFilesAreCurrent()) {
   scheduleDerivedRebuild(0);
 }
+startPeriodicDerivedRefresh();
 
 server.listen(PORT, HOST, () => {
   console.log(`hextech-runes-telemetry listening on ${HOST}:${PORT}`);

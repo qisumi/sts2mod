@@ -1,132 +1,185 @@
 using System.Collections.Generic;
 using System.Reflection;
 using Godot;
+using HarmonyLib;
 using MegaCrit.Sts2.Core.Assets;
+using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Relics;
-using MonoMod.RuntimeDetour;
 
 namespace Heartsteel;
 
 internal static class AssetHooks
 {
-	private static readonly Dictionary<string, PortableCompressedTexture2D> ManualTextureCache = new();
+	private static readonly Dictionary<string, Texture2D> TextureCache = new();
 
-	private static Hook? _relicIconHook;
-	private static Hook? _relicBigIconHook;
-	private static Hook? _relicReloadHook;
-	private static Hook? _powerIconHook;
-	private static Hook? _powerBigIconHook;
-	private static Hook? _combatPowerReloadHook;
-	private static Hook? _eventInitialPortraitHook;
+	private static bool _hooksInstalled;
 
-	private static readonly FieldInfo NRelicModelField = typeof(NRelic).GetField("_model", BindingFlags.Instance | BindingFlags.NonPublic)
-		?? throw new InvalidOperationException("Could not access NRelic._model.");
+	private static readonly FieldInfo? NRelicModelField = TryGetField(typeof(NRelic), "_model");
 
-	private static readonly FieldInfo CombatPowerModelField = typeof(NPower).GetField("_model", BindingFlags.Instance | BindingFlags.NonPublic)
-		?? throw new InvalidOperationException("Could not access NPower._model.");
+	private static readonly FieldInfo? CombatPowerModelField = TryGetField(typeof(NPower), "_model");
 
-	private static readonly FieldInfo CombatPowerIconField = typeof(NPower).GetField("_icon", BindingFlags.Instance | BindingFlags.NonPublic)
-		?? throw new InvalidOperationException("Could not access NPower._icon.");
+	private static readonly FieldInfo? CombatPowerIconField = TryGetField(typeof(NPower), "_icon");
 
-	private static readonly FieldInfo CombatPowerFlashField = typeof(NPower).GetField("_powerFlash", BindingFlags.Instance | BindingFlags.NonPublic)
-		?? throw new InvalidOperationException("Could not access NPower._powerFlash.");
+	private static readonly FieldInfo? CombatPowerFlashField = TryGetField(typeof(NPower), "_powerFlash");
 
-	private delegate Texture2D OrigGetRelicIcon(RelicModel self);
-
-	private delegate Texture2D OrigGetRelicBigIcon(RelicModel self);
-
-	private delegate void OrigNRelicReload(NRelic self);
-
-	private delegate Texture2D OrigGetPowerIcon(PowerModel self);
-
-	private delegate Texture2D OrigGetPowerBigIcon(PowerModel self);
-
-	private delegate void OrigCombatPowerReload(NPower self);
-
-	private delegate Texture2D OrigCreateInitialPortrait(EventModel self);
-
-	public static void Install()
+	public static void Install(Harmony harmony)
 	{
-		MethodInfo getRelicIcon = RequireGetter(typeof(RelicModel), nameof(RelicModel.Icon));
-		MethodInfo getRelicBigIcon = RequireGetter(typeof(RelicModel), nameof(RelicModel.BigIcon));
-		MethodInfo relicReload = RequireMethod(typeof(NRelic), "Reload", BindingFlags.Instance | BindingFlags.NonPublic);
-		MethodInfo getPowerIcon = RequireGetter(typeof(PowerModel), nameof(PowerModel.Icon));
-		MethodInfo getPowerBigIcon = RequireGetter(typeof(PowerModel), nameof(PowerModel.BigIcon));
-		MethodInfo combatPowerReload = RequireMethod(typeof(NPower), "Reload", BindingFlags.Instance | BindingFlags.NonPublic);
-		MethodInfo createInitialPortrait = RequireMethod(typeof(EventModel), nameof(EventModel.CreateInitialPortrait), BindingFlags.Instance | BindingFlags.Public);
+		if (_hooksInstalled)
+		{
+			return;
+		}
 
-		_relicIconHook = new Hook(getRelicIcon, RelicIconDetour);
-		_relicBigIconHook = new Hook(getRelicBigIcon, RelicBigIconDetour);
-		_relicReloadHook = new Hook(relicReload, NRelicReloadDetour);
-		_powerIconHook = new Hook(getPowerIcon, PowerIconDetour);
-		_powerBigIconHook = new Hook(getPowerBigIcon, PowerBigIconDetour);
-		_combatPowerReloadHook = new Hook(combatPowerReload, CombatPowerReloadDetour);
-		_eventInitialPortraitHook = new Hook(createInitialPortrait, CreateInitialPortraitDetour);
+		if (TryGetGetter(typeof(RelicModel), nameof(RelicModel.Icon)) is { } getRelicIcon)
+		{
+			harmony.Patch(getRelicIcon, prefix: new HarmonyMethod(typeof(AssetHooks), nameof(RelicIconPrefix)));
+		}
+
+		if (TryGetGetter(typeof(RelicModel), nameof(RelicModel.BigIcon)) is { } getRelicBigIcon)
+		{
+			harmony.Patch(getRelicBigIcon, prefix: new HarmonyMethod(typeof(AssetHooks), nameof(RelicBigIconPrefix)));
+		}
+
+		if (NRelicModelField != null && TryGetMethod(typeof(NRelic), "Reload", BindingFlags.Instance | BindingFlags.NonPublic) is { } relicReload)
+		{
+			harmony.Patch(relicReload, prefix: new HarmonyMethod(typeof(AssetHooks), nameof(NRelicReloadPrefix)));
+		}
+		else
+		{
+			Log.Warn("[Heartsteel] NRelic.Reload or NRelic._model not found; relic node icon reload hook disabled.");
+		}
+
+		if (TryGetGetter(typeof(PowerModel), nameof(PowerModel.Icon)) is { } getPowerIcon)
+		{
+			harmony.Patch(getPowerIcon, prefix: new HarmonyMethod(typeof(AssetHooks), nameof(PowerIconPrefix)));
+		}
+
+		if (TryGetGetter(typeof(PowerModel), nameof(PowerModel.BigIcon)) is { } getPowerBigIcon)
+		{
+			harmony.Patch(getPowerBigIcon, prefix: new HarmonyMethod(typeof(AssetHooks), nameof(PowerBigIconPrefix)));
+		}
+
+		if (CanPatchCombatPowerReload() && TryGetMethod(typeof(NPower), "Reload", BindingFlags.Instance | BindingFlags.NonPublic) is { } combatPowerReload)
+		{
+			harmony.Patch(combatPowerReload, postfix: new HarmonyMethod(typeof(AssetHooks), nameof(CombatPowerReloadPostfix)));
+		}
+		else
+		{
+			Log.Warn("[Heartsteel] NPower.Reload or power icon fields not found; combat power node refresh hook disabled.");
+		}
+
+		if (TryGetMethod(typeof(EventModel), nameof(EventModel.CreateInitialPortrait), BindingFlags.Instance | BindingFlags.Public) is { } createInitialPortrait)
+		{
+			harmony.Patch(createInitialPortrait, prefix: new HarmonyMethod(typeof(AssetHooks), nameof(CreateInitialPortraitPrefix)));
+		}
+		else
+		{
+			Log.Warn("[Heartsteel] EventModel.CreateInitialPortrait not found; Ornn's Forge portrait fallback disabled.");
+		}
+		_hooksInstalled = true;
 	}
 
-	private static Texture2D CreateInitialPortraitDetour(OrigCreateInitialPortrait orig, EventModel self)
+	private static bool CanPatchCombatPowerReload()
 	{
-		if (self.Id == ModelDb.GetId<OrnnsForge>())
+		return CombatPowerModelField != null
+			&& CombatPowerIconField != null
+			&& CombatPowerFlashField != null;
+	}
+
+	private static bool CreateInitialPortraitPrefix(EventModel __instance, ref Texture2D __result)
+	{
+		if (__instance.Id == ModelDb.GetId<OrnnsForge>())
 		{
-			Texture2D? texture = LoadPortableTexture(ModInfo.OrnnsForgePortraitPath);
+			Texture2D? texture = LoadTexture(ModInfo.OrnnsForgePortraitPath);
 			if (texture != null)
 			{
-				return texture;
+				__result = texture;
+				return false;
 			}
 		}
 
-		return orig(self);
+		return true;
 	}
 
-	private static Texture2D RelicIconDetour(OrigGetRelicIcon orig, RelicModel self)
+	private static bool RelicIconPrefix(RelicModel __instance, ref Texture2D __result)
 	{
-		return TryGetHeartsteelRelicTexture(self, out Texture2D? texture) ? texture! : orig(self);
+		if (TryGetHeartsteelRelicTexture(__instance, out Texture2D? texture))
+		{
+			__result = texture!;
+			return false;
+		}
+
+		return true;
 	}
 
-	private static Texture2D RelicBigIconDetour(OrigGetRelicBigIcon orig, RelicModel self)
+	private static bool RelicBigIconPrefix(RelicModel __instance, ref Texture2D __result)
 	{
-		return TryGetHeartsteelRelicTexture(self, out Texture2D? texture) ? texture! : orig(self);
+		if (TryGetHeartsteelRelicTexture(__instance, out Texture2D? texture))
+		{
+			__result = texture!;
+			return false;
+		}
+
+		return true;
 	}
 
-	private static void NRelicReloadDetour(OrigNRelicReload orig, NRelic self)
+	private static bool NRelicReloadPrefix(NRelic __instance)
 	{
-		if (!self.IsNodeReady()
-			|| NRelicModelField.GetValue(self) is not RelicModel model
+		if (!__instance.IsNodeReady()
+			|| NRelicModelField?.GetValue(__instance) is not RelicModel model
 			|| !TryGetHeartsteelRelicTexture(model, out Texture2D? texture))
 		{
-			orig(self);
-			return;
+			return true;
 		}
 
-		model.UpdateTexture(self.Icon);
-		self.Icon.Texture = texture;
-		self.Outline.Visible = false;
+		try
+		{
+			model.UpdateTexture(__instance.Icon);
+			__instance.Icon.Texture = texture;
+			__instance.Outline.Visible = false;
+		}
+		catch (ObjectDisposedException)
+		{
+			TextureCache.Remove(ModInfo.RelicIconPath);
+			return true;
+		}
+
+		return false;
 	}
 
-	private static Texture2D PowerIconDetour(OrigGetPowerIcon orig, PowerModel self)
+	private static bool PowerIconPrefix(PowerModel __instance, ref Texture2D __result)
 	{
-		Texture2D? texture = TryGetHeartsteelPowerTexture(self);
-		return texture ?? orig(self);
+		Texture2D? texture = TryGetHeartsteelPowerTexture(__instance);
+		if (texture != null)
+		{
+			__result = texture;
+			return false;
+		}
+
+		return true;
 	}
 
-	private static Texture2D PowerBigIconDetour(OrigGetPowerBigIcon orig, PowerModel self)
+	private static bool PowerBigIconPrefix(PowerModel __instance, ref Texture2D __result)
 	{
-		Texture2D? texture = TryGetHeartsteelPowerTexture(self);
-		return texture ?? orig(self);
+		Texture2D? texture = TryGetHeartsteelPowerTexture(__instance);
+		if (texture != null)
+		{
+			__result = texture;
+			return false;
+		}
+
+		return true;
 	}
 
-	private static void CombatPowerReloadDetour(OrigCombatPowerReload orig, NPower self)
+	private static void CombatPowerReloadPostfix(NPower __instance)
 	{
-		orig(self);
-
-		if (!self.IsNodeReady())
+		if (!__instance.IsNodeReady())
 		{
 			return;
 		}
 
-		if (CombatPowerModelField.GetValue(self) is not PowerModel model)
+		if (CombatPowerModelField?.GetValue(__instance) is not PowerModel model)
 		{
 			return;
 		}
@@ -137,8 +190,15 @@ internal static class AssetHooks
 			return;
 		}
 
-		((TextureRect)CombatPowerIconField.GetValue(self)!).Texture = texture;
-		((CpuParticles2D)CombatPowerFlashField.GetValue(self)!).Texture = texture;
+		if (CombatPowerIconField?.GetValue(__instance) is TextureRect icon)
+		{
+			icon.Texture = texture;
+		}
+
+		if (CombatPowerFlashField?.GetValue(__instance) is CpuParticles2D flash)
+		{
+			flash.Texture = texture;
+		}
 	}
 
 	private static Texture2D? TryGetHeartsteelPowerTexture(PowerModel self)
@@ -148,7 +208,7 @@ internal static class AssetHooks
 			return null;
 		}
 
-		return LoadPortableTexture(ModInfo.PowerIconPath);
+		return LoadTexture(ModInfo.PowerIconPath);
 	}
 
 	private static bool TryGetHeartsteelRelicTexture(RelicModel self, out Texture2D? texture)
@@ -159,21 +219,38 @@ internal static class AssetHooks
 			return false;
 		}
 
-		texture = LoadPortableTexture(ModInfo.RelicIconPath);
+		texture = LoadTexture(ModInfo.RelicIconPath);
 		return texture != null;
 	}
 
-	private static PortableCompressedTexture2D? LoadPortableTexture(string path)
+	private static Texture2D? LoadTexture(string path)
 	{
-		if (ManualTextureCache.TryGetValue(path, out PortableCompressedTexture2D? cachedTexture))
+		if (TextureCache.TryGetValue(path, out Texture2D? cachedTexture))
 		{
-			return cachedTexture;
+			if (IsTextureUsable(cachedTexture))
+			{
+				return cachedTexture;
+			}
+
+			TextureCache.Remove(path);
 		}
 
-		byte[] bytes = Godot.FileAccess.GetFileAsBytes(path);
-		if (bytes.Length == 0)
+		if (TryLoadPortableTexture(path, out Texture2D? portableTexture))
 		{
-			return null;
+			TextureCache[path] = portableTexture!;
+			return portableTexture;
+		}
+
+		return null;
+	}
+
+	private static bool TryLoadPortableTexture(string path, out Texture2D? texture)
+	{
+		texture = null;
+		byte[] bytes = Godot.FileAccess.GetFileAsBytes(path);
+		if (bytes.Length == 0 && !TryGetEmbeddedBytes(path, out bytes))
+		{
+			return false;
 		}
 
 		Image image = new();
@@ -182,24 +259,75 @@ internal static class AssetHooks
 			: image.LoadJpgFromBuffer(bytes);
 		if (err != Error.Ok)
 		{
-			return null;
+			return false;
 		}
 
-		PortableCompressedTexture2D texture = new();
-		texture.CreateFromImage(image, PortableCompressedTexture2D.CompressionMode.Lossless);
-		ManualTextureCache[path] = texture;
-		return texture;
+		PortableCompressedTexture2D portableTexture = new();
+		portableTexture.CreateFromImage(image, PortableCompressedTexture2D.CompressionMode.Lossless);
+		texture = portableTexture;
+		return true;
+	}
+
+	private static bool IsTextureUsable(Texture2D texture)
+	{
+		try
+		{
+			return GodotObject.IsInstanceValid(texture) && texture.GetWidth() > 0;
+		}
+		catch (ObjectDisposedException)
+		{
+			return false;
+		}
+	}
+
+	private static bool TryGetEmbeddedBytes(string path, out byte[] bytes)
+	{
+		bytes = [];
+		const string prefix = "res://Heartsteel/images/";
+		if (!path.StartsWith(prefix, StringComparison.Ordinal))
+		{
+			return false;
+		}
+
+		string resourceName = "Heartsteel.images." + path[prefix.Length..].Replace('/', '.');
+		using Stream? stream = typeof(AssetHooks).Assembly.GetManifestResourceStream(resourceName);
+		if (stream == null)
+		{
+			return false;
+		}
+
+		using MemoryStream memory = new();
+		stream.CopyTo(memory);
+		bytes = memory.ToArray();
+		return bytes.Length > 0;
+	}
+
+	private static MethodInfo? TryGetMethod(Type type, string name, BindingFlags flags, params Type[] parameterTypes)
+	{
+		return type.GetMethod(name, flags, binder: null, parameterTypes, modifiers: null);
+	}
+
+	private static MethodInfo? TryGetGetter(Type type, string propertyName)
+	{
+		return type.GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetMethod
+			?? AccessTools.PropertyGetter(type, propertyName)
+			?? AccessTools.Method(type, "get_" + propertyName);
+	}
+
+	private static FieldInfo? TryGetField(Type type, string name)
+	{
+		return type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
 	}
 
 	private static MethodInfo RequireMethod(Type type, string name, BindingFlags flags, params Type[] parameterTypes)
 	{
-		return type.GetMethod(name, flags, binder: null, parameterTypes, modifiers: null)
+		return TryGetMethod(type, name, flags, parameterTypes)
 			?? throw new InvalidOperationException($"Could not find method {type.FullName}.{name}.");
 	}
 
 	private static MethodInfo RequireGetter(Type type, string propertyName)
 	{
-		return type.GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetMethod
+		return TryGetGetter(type, propertyName)
 			?? throw new InvalidOperationException($"Could not find property getter {type.FullName}.{propertyName}.");
 	}
 }

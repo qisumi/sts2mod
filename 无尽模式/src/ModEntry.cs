@@ -10,6 +10,7 @@ using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Entities.Relics;
+using MegaCrit.Sts2.Core.Entities.Rewards;
 using MegaCrit.Sts2.Core.Events;
 using MegaCrit.Sts2.Core.GameActions;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
@@ -27,12 +28,17 @@ using MegaCrit.Sts2.Core.Models.Monsters;
 using MegaCrit.Sts2.Core.Models.Powers;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Nodes;
+using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.HoverTips;
 using MegaCrit.Sts2.Core.Nodes.Relics;
+using MegaCrit.Sts2.Core.Nodes.Rewards;
+using MegaCrit.Sts2.Core.Nodes.Screens;
+using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Nodes.Screens.InspectScreens;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
+using MegaCrit.Sts2.Core.Nodes.Screens.Overlays;
 using MegaCrit.Sts2.Core.Odds;
 using MegaCrit.Sts2.Core.Random;
 using MegaCrit.Sts2.Core.Rewards;
@@ -84,6 +90,10 @@ public static class ModEntry
 	private static readonly FieldInfo? InspectRelicScreenImageField = TryGetField(typeof(NInspectRelicScreen), "_relicImage");
 	private static readonly FieldInfo? InspectRelicScreenHoverTipRectField = TryGetField(typeof(NInspectRelicScreen), "_hoverTipRect");
 	private static readonly MethodInfo? InspectRelicScreenSetRarityVisualsMethod = TryGetMethod(typeof(NInspectRelicScreen), "SetRarityVisuals", BindingFlags.Instance | BindingFlags.NonPublic, typeof(RelicRarity));
+	private static readonly FieldInfo? RewardsScreenRewardsContainerField = TryGetField(typeof(NRewardsScreen), "_rewardsContainer");
+	private static readonly FieldInfo? RewardsScreenRewardButtonsField = TryGetField(typeof(NRewardsScreen), "_rewardButtons");
+	private static readonly FieldInfo? RewardsScreenSkippedRewardButtonsField = TryGetField(typeof(NRewardsScreen), "_skippedRewardButtons");
+	private static readonly FieldInfo? RewardsScreenIsCompleteField = TryGetField(typeof(NRewardsScreen), "<IsComplete>k__BackingField");
 
 	private static Harmony? _harmony;
 	private static bool _hooksInstalled;
@@ -91,6 +101,8 @@ public static class ModEntry
 	private static readonly Dictionary<string, Texture2D> ManualTextureCache = new();
 	private static readonly object StartedEndlessTransitionKeysLock = new();
 	private static readonly Dictionary<string, EndlessTransitionRecord> StartedEndlessTransitionKeys = new(StringComparer.Ordinal);
+	private static readonly HashSet<NRewardsScreen> DetachedRewardScreens = new(ReferenceEqualityComparer.Instance);
+	private static readonly HashSet<NCardRewardSelectionScreen> DetachedCardRewardSelectionScreens = new(ReferenceEqualityComparer.Instance);
 
 	public static void Initialize()
 	{
@@ -135,6 +147,13 @@ public static class ModEntry
 		harmony.Patch(
 			RequireMethod(typeof(NMapScreen), nameof(NMapScreen.SetMap), BindingFlags.Instance | BindingFlags.Public, typeof(ActMap), typeof(uint), typeof(bool)),
 			prefix: new HarmonyMethod(typeof(ModEntry), nameof(NMapScreenSetMapPrefix)));
+		harmony.Patch(
+			RequireMethod(typeof(NRewardsScreen), nameof(NRewardsScreen.AfterOverlayClosed), BindingFlags.Instance | BindingFlags.Public),
+			prefix: new HarmonyMethod(typeof(ModEntry), nameof(NRewardsScreenAfterOverlayClosedPrefix)));
+		harmony.Patch(
+			RequireMethod(typeof(NRewardsScreen), "OnProceedButtonPressed", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, typeof(NButton)),
+			prefix: new HarmonyMethod(typeof(ModEntry), nameof(NRewardsScreenOnProceedButtonPressedPrefix)));
+		InstallCardRewardSelectionScreenSafetyHooks(harmony);
 		harmony.Patch(
 			RequirePropertyGetter(typeof(UnlockState), nameof(UnlockState.Relics), BindingFlags.Instance | BindingFlags.Public),
 			postfix: new HarmonyMethod(typeof(ModEntry), nameof(GetUnlockStateRelicsPostfix)));
@@ -191,6 +210,31 @@ public static class ModEntry
 			Log.Warn("[EndlessMode][Config] NCharacterSelectScreen._Ready not found; config window disabled on this build.");
 		}
 		_hooksInstalled = true;
+	}
+
+	private static void InstallCardRewardSelectionScreenSafetyHooks(Harmony harmony)
+	{
+		if (TryGetMethod(typeof(NCardRewardSelectionScreen), "SelectCard", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, typeof(NCardHolder)) is { } selectCardMethod)
+		{
+			harmony.Patch(
+				selectCardMethod,
+				prefix: new HarmonyMethod(typeof(ModEntry), nameof(NCardRewardSelectionScreenSelectCardPrefix)));
+		}
+		else
+		{
+			Log.Warn("[EndlessMode] NCardRewardSelectionScreen.SelectCard not found; detached card reward selection safety hook disabled.");
+		}
+
+		if (TryGetMethod(typeof(NCardRewardSelectionScreen), "OnAlternateRewardSelected", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, typeof(PostAlternateCardRewardAction)) is { } alternateRewardMethod)
+		{
+			harmony.Patch(
+				alternateRewardMethod,
+				prefix: new HarmonyMethod(typeof(ModEntry), nameof(NCardRewardSelectionScreenAlternateRewardPrefix)));
+		}
+		else
+		{
+			Log.Warn("[EndlessMode] NCardRewardSelectionScreen.OnAlternateRewardSelected not found; detached alternate reward safety hook disabled.");
+		}
 	}
 
 	private static void InstallInspectRelicScreenHooks(Harmony harmony)
@@ -303,6 +347,7 @@ public static class ModEntry
 		try
 		{
 			string loopSeed = CreateDeterministicLoopSeed(state, nextLoopIndex);
+			await PrepareScreensForEndlessTransitionAsync(nextLoopIndex);
 			int enabledRewardFlags = await ResolveLoopRewardFlagsAsync(state, runManager, nextLoopIndex);
 			await AwardLoopRewardsAsync(state, enabledRewardFlags, nextLoopIndex);
 			PrepareRunForLoop(state, loopSeed);
@@ -468,6 +513,207 @@ public static class ModEntry
 		return new string(seed);
 	}
 
+	private static async Task PrepareScreensForEndlessTransitionAsync(int loopIndex)
+	{
+		PurgeDetachedScreenSets();
+		NOverlayStack? overlayStack = NOverlayStack.Instance;
+		Node? root = GetUiSearchRoot(overlayStack);
+		if (root == null)
+		{
+			return;
+		}
+
+		int overlayCount = overlayStack != null && GodotObject.IsInstanceValid(overlayStack) ? overlayStack.ScreenCount : 0;
+		List<NRewardsScreen> rewardScreens = FindNodesOfType<NRewardsScreen>(root);
+		List<NCardRewardSelectionScreen> cardRewardScreens = FindNodesOfType<NCardRewardSelectionScreen>(root);
+		int detachedRewardCount = 0;
+		foreach (NRewardsScreen rewardsScreen in rewardScreens)
+		{
+			DetachedRewardScreens.Add(rewardsScreen);
+			DisableDetachedScreen(rewardsScreen);
+			detachedRewardCount += DetachRewardsFromScreen(rewardsScreen);
+		}
+
+		foreach (NCardRewardSelectionScreen cardRewardScreen in cardRewardScreens)
+		{
+			DetachedCardRewardSelectionScreens.Add(cardRewardScreen);
+			DisableDetachedScreen(cardRewardScreen);
+		}
+
+		if (overlayCount <= 0 && rewardScreens.Count == 0 && cardRewardScreens.Count == 0)
+		{
+			return;
+		}
+
+		Log.Info($"[EndlessMode] Clearing reward screens before endless loop transition loop={loopIndex} overlays={overlayCount} rewardScreens={rewardScreens.Count} cardRewardScreens={cardRewardScreens.Count} detachedRewards={detachedRewardCount}.");
+		overlayStack?.Clear();
+		RemoveDetachedScreensFromTree(rewardScreens);
+		RemoveDetachedScreensFromTree(cardRewardScreens);
+		await AwaitProcessFramesAsync(2);
+	}
+
+	private static Node? GetUiSearchRoot(NOverlayStack? overlayStack)
+	{
+		if (overlayStack != null && GodotObject.IsInstanceValid(overlayStack))
+		{
+			Node? root = overlayStack.GetTree()?.Root;
+			return root ?? overlayStack;
+		}
+
+		return null;
+	}
+
+	private static List<T> FindNodesOfType<T>(Node root)
+		where T : Node
+	{
+		List<T> result = new();
+		HashSet<T> seen = new(ReferenceEqualityComparer.Instance);
+		CollectNodesOfType(root, result, seen);
+		return result;
+	}
+
+	private static void CollectNodesOfType<T>(Node node, List<T> result, HashSet<T> seen)
+		where T : Node
+	{
+		if (node is T typed && seen.Add(typed))
+		{
+			result.Add(typed);
+		}
+
+		foreach (Node child in node.GetChildren())
+		{
+			CollectNodesOfType(child, result, seen);
+		}
+	}
+
+	private static void DisableDetachedScreen(Control screen)
+	{
+		screen.Visible = false;
+		screen.MouseFilter = Control.MouseFilterEnum.Ignore;
+		screen.ProcessMode = Node.ProcessModeEnum.Disabled;
+	}
+
+	private static void RemoveDetachedScreensFromTree<T>(IEnumerable<T> screens)
+		where T : Node
+	{
+		foreach (T screen in screens)
+		{
+			if (!GodotObject.IsInstanceValid(screen))
+			{
+				continue;
+			}
+
+			Node? parent = screen.GetParent();
+			if (parent == null)
+			{
+				continue;
+			}
+
+			parent.RemoveChildSafely(screen);
+			screen.QueueFreeSafely();
+		}
+	}
+
+	private static int DetachRewardsFromScreen(NRewardsScreen rewardsScreen)
+	{
+		int detachedRewardCount = 0;
+		if (RewardsScreenRewardsContainerField?.GetValue(rewardsScreen) is Control rewardsContainer)
+		{
+			foreach (Node child in rewardsContainer.GetChildren().ToList())
+			{
+				if (child is NRewardButton or NLinkedRewardSet)
+				{
+					rewardsContainer.RemoveChildSafely(child);
+					child.QueueFreeSafely();
+					detachedRewardCount++;
+				}
+			}
+		}
+
+		if (RewardsScreenRewardButtonsField?.GetValue(rewardsScreen) is IList<Control> rewardButtons)
+		{
+			rewardButtons.Clear();
+		}
+
+		if (RewardsScreenSkippedRewardButtonsField?.GetValue(rewardsScreen) is IList<Control> skippedRewardButtons)
+		{
+			skippedRewardButtons.Clear();
+		}
+
+		return detachedRewardCount;
+	}
+
+	private static bool NRewardsScreenAfterOverlayClosedPrefix(NRewardsScreen __instance)
+	{
+		if (!IsDetachedRewardScreen(__instance))
+		{
+			return true;
+		}
+
+		Log.Info("[EndlessMode] Suppressed detached rewards screen close after endless loop transition.");
+		DetachRewardsFromScreen(__instance);
+		MarkRewardsScreenComplete(__instance);
+		return false;
+	}
+
+	private static bool NRewardsScreenOnProceedButtonPressedPrefix(NRewardsScreen __instance)
+	{
+		if (!IsDetachedRewardScreen(__instance))
+		{
+			return true;
+		}
+
+		Log.Info("[EndlessMode] Ignored detached rewards screen proceed after endless loop transition.");
+		DetachRewardsFromScreen(__instance);
+		MarkRewardsScreenComplete(__instance);
+		return false;
+	}
+
+	private static void MarkRewardsScreenComplete(NRewardsScreen rewardsScreen)
+	{
+		RewardsScreenIsCompleteField?.SetValue(rewardsScreen, true);
+	}
+
+	private static bool NCardRewardSelectionScreenSelectCardPrefix(NCardRewardSelectionScreen __instance)
+	{
+		if (!IsDetachedCardRewardSelectionScreen(__instance))
+		{
+			return true;
+		}
+
+		Log.Info("[EndlessMode] Ignored detached card reward selection after endless loop transition.");
+		return false;
+	}
+
+	private static bool NCardRewardSelectionScreenAlternateRewardPrefix(NCardRewardSelectionScreen __instance)
+	{
+		if (!IsDetachedCardRewardSelectionScreen(__instance))
+		{
+			return true;
+		}
+
+		Log.Info("[EndlessMode] Ignored detached alternate card reward after endless loop transition.");
+		return false;
+	}
+
+	private static bool IsDetachedRewardScreen(NRewardsScreen rewardsScreen)
+	{
+		PurgeDetachedScreenSets();
+		return DetachedRewardScreens.Contains(rewardsScreen);
+	}
+
+	private static bool IsDetachedCardRewardSelectionScreen(NCardRewardSelectionScreen screen)
+	{
+		PurgeDetachedScreenSets();
+		return DetachedCardRewardSelectionScreens.Contains(screen);
+	}
+
+	private static void PurgeDetachedScreenSets()
+	{
+		DetachedRewardScreens.RemoveWhere(static screen => !GodotObject.IsInstanceValid(screen));
+		DetachedCardRewardSelectionScreens.RemoveWhere(static screen => !GodotObject.IsInstanceValid(screen));
+	}
+
 	private static void ResetHextechMayhemForEndlessLoop(RunState state, int nextLoopIndex)
 	{
 		foreach (object modifier in state.Modifiers)
@@ -517,12 +763,20 @@ public static class ModEntry
 
 	private static async Task WaitForMapTransitionFrameAsync()
 	{
-		if (NGame.Instance != null && GodotObject.IsInstanceValid(NGame.Instance))
-		{
-			await NodeUtil.AwaitProcessFrame(NGame.Instance);
-		}
+		await AwaitProcessFramesAsync(1);
 
 		Log.Info("[EndlessMode] Preserved NMapScreen before endless loop act transition.");
+	}
+
+	private static async Task AwaitProcessFramesAsync(int frameCount)
+	{
+		for (int i = 0; i < frameCount; i++)
+		{
+			if (NGame.Instance != null && GodotObject.IsInstanceValid(NGame.Instance))
+			{
+				await NodeUtil.AwaitProcessFrame(NGame.Instance);
+			}
+		}
 	}
 
 	private static async Task GrantUniqueRelicAsync<TRelic>(Player player) where TRelic : RelicModel
@@ -1155,9 +1409,34 @@ public static class ModEntry
 		return 1m + 0.75m * Math.Max(0, plagueShieldStackCount);
 	}
 
+	internal static bool ShouldApplyPlagueSpearEffect(PlagueSpear relic)
+	{
+		return IsPrimarySharedRelic(relic, GetRunStateForRelic(relic));
+	}
+
+	internal static bool ShouldApplyPlagueShieldEffect(PlagueShield relic)
+	{
+		return IsPrimarySharedRelic(relic, GetRunStateForRelic(relic));
+	}
+
+	internal static int GetSharedPlagueSpearStackCount(PlagueSpear relic)
+	{
+		return GetSharedStackCount(relic, GetPlagueSpearStackCount);
+	}
+
+	internal static int GetSharedPlagueShieldStackCount(PlagueShield relic)
+	{
+		return GetSharedStackCount(relic, GetPlagueShieldStackCount);
+	}
+
 	private static IRunState? GetCurrentRunState(Creature creature)
 	{
 		return creature.Player?.RunState ?? RunManager.Instance?.DebugOnlyGetState();
+	}
+
+	private static IRunState? GetRunStateForRelic(RelicModel relic)
+	{
+		return relic.Owner?.RunState ?? RunManager.Instance?.DebugOnlyGetState();
 	}
 
 	private static bool IsRestSiteHeal(Creature creature)
@@ -1167,6 +1446,16 @@ public static class ModEntry
 
 	private static int GetPlagueShieldStackCount(IRunState? runState)
 	{
+		return GetMaxRelicStackCount<PlagueShield>(runState);
+	}
+
+	private static int GetPlagueSpearStackCount(IRunState? runState)
+	{
+		return GetMaxRelicStackCount<PlagueSpear>(runState);
+	}
+
+	private static int GetMaxRelicStackCount<TRelic>(IRunState? runState) where TRelic : EndlessStackingRelicBase
+	{
 		if (runState == null)
 		{
 			return 0;
@@ -1174,10 +1463,35 @@ public static class ModEntry
 
 		return runState.Players
 			.SelectMany(static player => player.Relics)
-			.OfType<PlagueShield>()
+			.OfType<TRelic>()
 			.Select(static relic => relic.StackCount)
 			.DefaultIfEmpty(0)
 			.Max();
+	}
+
+	private static int GetSharedStackCount<TRelic>(TRelic relic, Func<IRunState?, int> getStackCount) where TRelic : EndlessStackingRelicBase
+	{
+		int stackCount = getStackCount(GetRunStateForRelic(relic));
+		return stackCount > 0 ? stackCount : relic.StackCount;
+	}
+
+	private static bool IsPrimarySharedRelic<TRelic>(TRelic relic, IRunState? runState) where TRelic : EndlessStackingRelicBase
+	{
+		if (runState == null)
+		{
+			return true;
+		}
+
+		TRelic? primaryRelic = runState.Players
+			.SelectMany(static player => player.Relics
+				.OfType<TRelic>()
+				.Select(relic => (Player: player, Relic: relic)))
+			.OrderByDescending(static entry => entry.Relic.StackCount)
+			.ThenBy(static entry => entry.Player.NetId)
+			.Select(static entry => entry.Relic)
+			.FirstOrDefault();
+
+		return primaryRelic == null || ReferenceEquals(primaryRelic, relic);
 	}
 
 	private static bool IsEndlessRelic(RelicModel relic)
@@ -1597,7 +1911,12 @@ public sealed class PlagueSpear : EndlessStackingRelicBase
 			return 1m;
 		}
 
-		return 1m + 0.5m * StackCount;
+		if (!ModEntry.ShouldApplyPlagueSpearEffect(this))
+		{
+			return 1m;
+		}
+
+		return 1m + 0.5m * ModEntry.GetSharedPlagueSpearStackCount(this);
 	}
 }
 
@@ -1615,7 +1934,12 @@ public sealed class PlagueShield : EndlessStackingRelicBase
 			return 1m;
 		}
 
-		return 1m + 0.75m * StackCount;
+		if (!ModEntry.ShouldApplyPlagueShieldEffect(this))
+		{
+			return 1m;
+		}
+
+		return 1m + 0.75m * ModEntry.GetSharedPlagueShieldStackCount(this);
 	}
 }
 
@@ -1658,6 +1982,7 @@ public sealed class MimicInfestation : EndlessRelicBase
 public sealed class TimeMaze : EndlessRelicBase
 {
 	private int _cardsPlayedThisTurn;
+	private int _trackedRoundNumber = -1;
 
 	public TimeMaze()
 		: base("maze.png")
@@ -1677,6 +2002,7 @@ public sealed class TimeMaze : EndlessRelicBase
 			return true;
 		}
 
+		ResetForCurrentRoundIfNeeded();
 		return !ShouldPreventCardPlay;
 	}
 
@@ -1684,6 +2010,7 @@ public sealed class TimeMaze : EndlessRelicBase
 	{
 		if (cardPlay.Card.Owner == Owner)
 		{
+			ResetForCurrentRoundIfNeeded();
 			_cardsPlayedThisTurn++;
 			InvokeDisplayAmountChanged();
 		}
@@ -1695,8 +2022,7 @@ public sealed class TimeMaze : EndlessRelicBase
 	{
 		if (room is CombatRoom)
 		{
-			_cardsPlayedThisTurn = 0;
-			InvokeDisplayAmountChanged();
+			ResetCounter(GetCurrentRoundNumber());
 		}
 
 		return Task.CompletedTask;
@@ -1704,8 +2030,7 @@ public sealed class TimeMaze : EndlessRelicBase
 
 	public override Task AfterCombatEnd(CombatRoom room)
 	{
-		_cardsPlayedThisTurn = 0;
-		InvokeDisplayAmountChanged();
+		ResetCounter(-1);
 		return Task.CompletedTask;
 	}
 
@@ -1713,11 +2038,45 @@ public sealed class TimeMaze : EndlessRelicBase
 	{
 		if (Owner != null && side == Owner.Creature.Side)
 		{
-			_cardsPlayedThisTurn = 0;
-			InvokeDisplayAmountChanged();
+			ResetCounter(combatState.RoundNumber);
 		}
 
 		return Task.CompletedTask;
+	}
+
+	public override Task AfterPlayerTurnStart(PlayerChoiceContext choiceContext, Player player)
+	{
+		if (player == Owner)
+		{
+			ResetCounter(GetCurrentRoundNumber());
+		}
+
+		return Task.CompletedTask;
+	}
+
+	private void ResetForCurrentRoundIfNeeded()
+	{
+		int roundNumber = GetCurrentRoundNumber();
+		if (roundNumber >= 0 && roundNumber != _trackedRoundNumber)
+		{
+			ResetCounter(roundNumber);
+		}
+	}
+
+	private void ResetCounter(int roundNumber)
+	{
+		bool changed = _cardsPlayedThisTurn != 0 || _trackedRoundNumber != roundNumber;
+		_cardsPlayedThisTurn = 0;
+		_trackedRoundNumber = roundNumber;
+		if (changed)
+		{
+			InvokeDisplayAmountChanged();
+		}
+	}
+
+	private int GetCurrentRoundNumber()
+	{
+		return Owner?.Creature?.CombatState?.RoundNumber ?? -1;
 	}
 }
 

@@ -1,8 +1,8 @@
 {
   "elicitCard.title": "Elicit",
   "ELICIT_CARD.title": "Elicit",
-  "elicitCard.description": "Evoke all of your Orbs. {IfUpgraded:show:Draw [blue]{Cards}[/blue] cards.|}",
-  "ELICIT_CARD.description": "Evoke all of your Orbs. {IfUpgraded:show:Draw [blue]{Cards}[/blue] cards.|}",
+  "elicitCard.description": "Evoke all of your Orbs [blue]{Repeat}[/blue] time(s).",
+  "ELICIT_CARD.description": "Evoke all of your Orbs [blue]{Repeat}[/blue] time(s).",
   "elicitCard.flavor": "Let every coil discharge at once.",
   "ELICIT_CARD.flavor": "Let every coil discharge at once.",
   "trickMagicCard.title": "Trick Magic",

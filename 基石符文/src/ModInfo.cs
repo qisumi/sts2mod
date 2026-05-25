@@ -10,7 +10,11 @@ internal static class ModInfo
 
 	public const string DisplayName = "基石符文";
 
+#if STS2_104_OR_NEWER
+	public const string TargetGameVersion = "0.104.0";
+#else
 	public const string TargetGameVersion = "0.103.2";
+#endif
 
 	public const string KeystoneSubcategoryKey = "KEYSTONE_RUNES_SUBCATEGORY";
 
@@ -24,7 +28,7 @@ internal static class ModInfo
 
 	public const string AeryIconPath = "res://KeystoneRunes/images/relics/aery.png";
 
-	public const string PressAttackIconPath = "res://KeystoneRunes/images/relics/press_the_attack.png";
+	public const string LethalTempoIconPath = "res://KeystoneRunes/images/relics/lethal_tempo.png";
 
 	public const string PhaseRushIconPath = "res://KeystoneRunes/images/relics/phase_rush.png";
 
@@ -48,21 +52,21 @@ internal static class ModInfo
 	{
 		return
 		[
-			ModelDb.Relic<ElectrocuteRune>(),
-			ModelDb.Relic<FirstStrikeRune>(),
-			ModelDb.Relic<UndyingGraspRune>(),
-			ModelDb.Relic<ConquerorRune>(),
-			ModelDb.Relic<SummonAeryRune>(),
-			ModelDb.Relic<PressTheAttackRune>(),
-			ModelDb.Relic<PhaseRushRune>(),
-			ModelDb.Relic<UnsealedSpellbookRune>(),
-			ModelDb.Relic<HailOfBladesRune>(),
-			ModelDb.Relic<FleetFootworkRune>(),
-			ModelDb.Relic<ArcaneCometRune>(),
-			ModelDb.Relic<DarkHarvestRune>(),
-			ModelDb.Relic<GlacialAugmentRune>(),
-			ModelDb.Relic<AftershockRune>(),
-			ModelDb.Relic<GuardianRune>()
+			ModelDb.Relic<Keystone_ElectrocuteRune>(),
+			ModelDb.Relic<Keystone_FirstStrikeRune>(),
+			ModelDb.Relic<Keystone_UndyingGraspRune>(),
+			ModelDb.Relic<Keystone_ConquerorRune>(),
+			ModelDb.Relic<Keystone_SummonAeryRune>(),
+			ModelDb.Relic<Keystone_LethalTempoRune>(),
+			ModelDb.Relic<Keystone_PhaseRushRune>(),
+			ModelDb.Relic<Keystone_UnsealedSpellbookRune>(),
+			ModelDb.Relic<Keystone_HailOfBladesRune>(),
+			ModelDb.Relic<Keystone_FleetFootworkRune>(),
+			ModelDb.Relic<Keystone_ArcaneCometRune>(),
+			ModelDb.Relic<Keystone_DarkHarvestRune>(),
+			ModelDb.Relic<Keystone_GlacialAugmentRune>(),
+			ModelDb.Relic<Keystone_AftershockRune>(),
+			ModelDb.Relic<Keystone_GuardianRune>()
 		];
 	}
 
@@ -74,97 +78,97 @@ internal static class ModInfo
 		}
 
 		ModelId id = relic.CanonicalInstance?.Id ?? relic.Id;
-		return id == ModelDb.GetId<ElectrocuteRune>()
-			|| id == ModelDb.GetId<FirstStrikeRune>()
-			|| id == ModelDb.GetId<UndyingGraspRune>()
-			|| id == ModelDb.GetId<ConquerorRune>()
-			|| id == ModelDb.GetId<SummonAeryRune>()
-			|| id == ModelDb.GetId<PressTheAttackRune>()
-			|| id == ModelDb.GetId<PhaseRushRune>()
-			|| id == ModelDb.GetId<UnsealedSpellbookRune>()
-			|| id == ModelDb.GetId<HailOfBladesRune>()
-			|| id == ModelDb.GetId<FleetFootworkRune>()
-			|| id == ModelDb.GetId<ArcaneCometRune>()
-			|| id == ModelDb.GetId<DarkHarvestRune>()
-			|| id == ModelDb.GetId<GlacialAugmentRune>()
-			|| id == ModelDb.GetId<AftershockRune>()
-			|| id == ModelDb.GetId<GuardianRune>();
+		return id == ModelDb.GetId<Keystone_ElectrocuteRune>()
+			|| id == ModelDb.GetId<Keystone_FirstStrikeRune>()
+			|| id == ModelDb.GetId<Keystone_UndyingGraspRune>()
+			|| id == ModelDb.GetId<Keystone_ConquerorRune>()
+			|| id == ModelDb.GetId<Keystone_SummonAeryRune>()
+			|| id == ModelDb.GetId<Keystone_LethalTempoRune>()
+			|| id == ModelDb.GetId<Keystone_PhaseRushRune>()
+			|| id == ModelDb.GetId<Keystone_UnsealedSpellbookRune>()
+			|| id == ModelDb.GetId<Keystone_HailOfBladesRune>()
+			|| id == ModelDb.GetId<Keystone_FleetFootworkRune>()
+			|| id == ModelDb.GetId<Keystone_ArcaneCometRune>()
+			|| id == ModelDb.GetId<Keystone_DarkHarvestRune>()
+			|| id == ModelDb.GetId<Keystone_GlacialAugmentRune>()
+			|| id == ModelDb.GetId<Keystone_AftershockRune>()
+			|| id == ModelDb.GetId<Keystone_GuardianRune>();
 	}
 
 	public static string? TryGetRelicIconPath(RelicModel relic)
 	{
 		ModelId id = relic.CanonicalInstance?.Id ?? relic.Id;
-		if (id == ModelDb.GetId<ElectrocuteRune>())
+		if (id == ModelDb.GetId<Keystone_ElectrocuteRune>())
 		{
 			return ElectrocuteIconPath;
 		}
 
-		if (id == ModelDb.GetId<FirstStrikeRune>())
+		if (id == ModelDb.GetId<Keystone_FirstStrikeRune>())
 		{
 			return FirstStrikeIconPath;
 		}
 
-		if (id == ModelDb.GetId<UndyingGraspRune>())
+		if (id == ModelDb.GetId<Keystone_UndyingGraspRune>())
 		{
 			return GraspIconPath;
 		}
 
-		if (id == ModelDb.GetId<ConquerorRune>())
+		if (id == ModelDb.GetId<Keystone_ConquerorRune>())
 		{
 			return ConquerorIconPath;
 		}
 
-		if (id == ModelDb.GetId<SummonAeryRune>())
+		if (id == ModelDb.GetId<Keystone_SummonAeryRune>())
 		{
 			return AeryIconPath;
 		}
 
-		if (id == ModelDb.GetId<PressTheAttackRune>())
+		if (id == ModelDb.GetId<Keystone_LethalTempoRune>())
 		{
-			return PressAttackIconPath;
+			return LethalTempoIconPath;
 		}
 
-		if (id == ModelDb.GetId<PhaseRushRune>())
+		if (id == ModelDb.GetId<Keystone_PhaseRushRune>())
 		{
 			return PhaseRushIconPath;
 		}
 
-		if (id == ModelDb.GetId<UnsealedSpellbookRune>())
+		if (id == ModelDb.GetId<Keystone_UnsealedSpellbookRune>())
 		{
 			return UnsealedSpellbookIconPath;
 		}
 
-		if (id == ModelDb.GetId<HailOfBladesRune>())
+		if (id == ModelDb.GetId<Keystone_HailOfBladesRune>())
 		{
 			return HailOfBladesIconPath;
 		}
 
-		if (id == ModelDb.GetId<FleetFootworkRune>())
+		if (id == ModelDb.GetId<Keystone_FleetFootworkRune>())
 		{
 			return FleetFootworkIconPath;
 		}
 
-		if (id == ModelDb.GetId<ArcaneCometRune>())
+		if (id == ModelDb.GetId<Keystone_ArcaneCometRune>())
 		{
 			return ArcaneCometIconPath;
 		}
 
-		if (id == ModelDb.GetId<DarkHarvestRune>())
+		if (id == ModelDb.GetId<Keystone_DarkHarvestRune>())
 		{
 			return DarkHarvestIconPath;
 		}
 
-		if (id == ModelDb.GetId<GlacialAugmentRune>())
+		if (id == ModelDb.GetId<Keystone_GlacialAugmentRune>())
 		{
 			return GlacialAugmentIconPath;
 		}
 
-		if (id == ModelDb.GetId<AftershockRune>())
+		if (id == ModelDb.GetId<Keystone_AftershockRune>())
 		{
 			return AftershockIconPath;
 		}
 
-		if (id == ModelDb.GetId<GuardianRune>())
+		if (id == ModelDb.GetId<Keystone_GuardianRune>())
 		{
 			return GuardianIconPath;
 		}
@@ -193,11 +197,11 @@ internal static class ModInfo
 
 		return
 		[
-			new RuneSeriesGroup("PRECISION", BuildGroup(typeof(ConquerorRune), typeof(PressTheAttackRune), typeof(FleetFootworkRune))),
-			new RuneSeriesGroup("DOMINATION", BuildGroup(typeof(ElectrocuteRune), typeof(HailOfBladesRune), typeof(DarkHarvestRune))),
-			new RuneSeriesGroup("SORCERY", BuildGroup(typeof(SummonAeryRune), typeof(ArcaneCometRune), typeof(PhaseRushRune))),
-			new RuneSeriesGroup("RESOLVE", BuildGroup(typeof(UndyingGraspRune), typeof(AftershockRune), typeof(GuardianRune))),
-			new RuneSeriesGroup("INSPIRATION", BuildGroup(typeof(FirstStrikeRune), typeof(UnsealedSpellbookRune), typeof(GlacialAugmentRune)))
+			new RuneSeriesGroup("PRECISION", BuildGroup(typeof(Keystone_ConquerorRune), typeof(Keystone_LethalTempoRune), typeof(Keystone_FleetFootworkRune))),
+			new RuneSeriesGroup("DOMINATION", BuildGroup(typeof(Keystone_ElectrocuteRune), typeof(Keystone_HailOfBladesRune), typeof(Keystone_DarkHarvestRune))),
+			new RuneSeriesGroup("SORCERY", BuildGroup(typeof(Keystone_SummonAeryRune), typeof(Keystone_ArcaneCometRune), typeof(Keystone_PhaseRushRune))),
+			new RuneSeriesGroup("RESOLVE", BuildGroup(typeof(Keystone_UndyingGraspRune), typeof(Keystone_AftershockRune), typeof(Keystone_GuardianRune))),
+			new RuneSeriesGroup("INSPIRATION", BuildGroup(typeof(Keystone_FirstStrikeRune), typeof(Keystone_UnsealedSpellbookRune), typeof(Keystone_GlacialAugmentRune)))
 		];
 	}
 }

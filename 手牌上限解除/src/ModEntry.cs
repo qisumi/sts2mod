@@ -1,8 +1,8 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using System.Runtime.Loader;
-using System.Collections.Generic;
+using System.Reflection.Emit;
 using Godot;
+using HarmonyLib;
 using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.ControllerInput;
@@ -21,15 +21,14 @@ using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.HoverTips;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Runs;
-using Mono.Cecil.Cil;
-using MonoMod.Cil;
-using MonoMod.RuntimeDetour;
 
 namespace RemoveHandLimit;
 
 [ModInitializer(nameof(Initialize))]
 public static class ModEntry
 {
+	private const string HarmonyId = "Natsuki.RemoveHandLimit";
+
 	private const int HandLimit = 20;
 
 	private const int RowLimit = 10;
@@ -44,33 +43,13 @@ public static class ModEntry
 
 	private const int HoverTipZIndex = 1000;
 
-	private static ILHook? _cardPileAddIlHook;
-
-	private static ILHook? _cardPileDrawIlHook;
-
-	private static ILHook? _cardPileCanDrawIlHook;
-
-	private static Hook? _handPosGetPositionHook;
-
-	private static Hook? _handPosGetAngleHook;
-
-	private static Hook? _handPosGetScaleHook;
-
-	private static Hook? _refreshLayoutHook;
-
-	private static Hook? _handCardHoverHook;
-
-	private static Hook? _onHolderFocusedHook;
-
-	private static Hook? _onHolderUnfocusedHook;
-
-	private static Hook? _hoverTipAlignmentHook;
-
-	private static Hook? _startCardPlayHook;
+	private static Harmony? _harmony;
 
 	private static readonly Dictionary<ulong, Rect2> OriginalHitboxRects = new();
 
 	private static readonly HashSet<ulong> HoveredHolderIds = new();
+
+	private static bool _loggedSkippedBlockedHoverTipAlignment;
 
 	private static readonly FieldInfo SelectCardShortcutsField = RequireField(typeof(NPlayerHand), "_selectCardShortcuts", BindingFlags.Instance | BindingFlags.NonPublic);
 
@@ -82,61 +61,35 @@ public static class ModEntry
 
 	private static readonly FieldInfo LastFocusedHolderIndexField = RequireField(typeof(NPlayerHand), "_lastFocusedHolderIdx", BindingFlags.Instance | BindingFlags.NonPublic);
 
+	private static readonly FieldInfo HoverTipOwnerField = RequireField(typeof(NHoverTipSet), "_owner", BindingFlags.Instance | BindingFlags.NonPublic);
+
+	private static readonly FieldInfo HandPosCardPositionDataField = RequireField(typeof(HandPosHelper), "_cardPositionData", BindingFlags.Static | BindingFlags.NonPublic);
+
+	private static readonly FieldInfo HandPosCardAngleDataField = RequireField(typeof(HandPosHelper), "_cardAngleData", BindingFlags.Static | BindingFlags.NonPublic);
+
+	private static readonly FieldInfo HandPosBaseScaleField = RequireField(typeof(HandPosHelper), "_baseScale", BindingFlags.Static | BindingFlags.NonPublic);
+
+	private static readonly Vector2[][] VanillaCardPositionData = GetStaticFieldValue<Vector2[][]>(HandPosCardPositionDataField);
+
+	private static readonly float[][] VanillaCardAngleData = GetStaticFieldValue<float[][]>(HandPosCardAngleDataField);
+
+	private static readonly Vector2 VanillaBaseScale = GetStaticFieldValue<Vector2>(HandPosBaseScaleField);
+
 	private static readonly MethodInfo RefreshLayoutMethod = RequireMethod(typeof(NPlayerHand), "RefreshLayout", BindingFlags.Instance | BindingFlags.NonPublic);
 
 	private static readonly MethodInfo ReturnHolderToHandMethod = RequireMethod(typeof(NPlayerHand), "ReturnHolderToHand", BindingFlags.Instance | BindingFlags.NonPublic, typeof(NHandCardHolder));
 
 	private static readonly PropertyInfo FocusedHolderProperty = RequireProperty(typeof(NPlayerHand), nameof(NPlayerHand.FocusedHolder), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
-	private delegate Vector2 OrigGetPosition(int handSize, int cardIndex);
-
-	private delegate float OrigGetAngle(int handSize, int cardIndex);
-
-	private delegate Vector2 OrigGetScale(int handSize);
-
-	private delegate void OrigRefreshLayout(NPlayerHand self);
-
-	private delegate void OrigDoCardHoverEffects(NHandCardHolder self, bool isHovered);
-
-	private delegate void OrigOnHolderFocused(NPlayerHand self, NHandCardHolder holder);
-
-	private delegate void OrigOnHolderUnfocused(NPlayerHand self, NHandCardHolder holder);
-
-	private delegate void OrigSetAlignmentForCardHolder(NHoverTipSet self, NCardHolder holder);
-
-	private delegate void OrigStartCardPlay(NPlayerHand self, NHandCardHolder holder, bool startedViaShortcut);
-
 	public static void Initialize()
 	{
-		PreloadDependencyAssemblies();
 		InstallHooks();
 		Log.Info($"[RemoveHandLimit] Loaded. Hand limit patched to {HandLimit} with two 10-card rows.");
 	}
 
-	private static void PreloadDependencyAssemblies()
-	{
-		Assembly assembly = Assembly.GetExecutingAssembly();
-		string? modDirectory = Path.GetDirectoryName(assembly.Location);
-		if (string.IsNullOrEmpty(modDirectory) || !Directory.Exists(modDirectory))
-		{
-			return;
-		}
-
-		string selfPath = assembly.Location;
-		AssemblyLoadContext loadContext = AssemblyLoadContext.GetLoadContext(assembly) ?? AssemblyLoadContext.Default;
-		foreach (string dllPath in Directory.GetFiles(modDirectory, "*.dll"))
-		{
-			if (string.Equals(dllPath, selfPath, StringComparison.OrdinalIgnoreCase))
-			{
-				continue;
-			}
-
-			loadContext.LoadFromAssemblyPath(dllPath);
-		}
-	}
-
 	private static void InstallHooks()
 	{
+		Harmony harmony = _harmony ??= new Harmony(HarmonyId);
 		MethodInfo addCardsMethod = RequireMethod(
 			typeof(CardPileCmd),
 			nameof(CardPileCmd.Add),
@@ -207,239 +160,369 @@ public static class ModEntry
 			typeof(NHandCardHolder),
 			typeof(bool));
 
-		_cardPileAddIlHook = new ILHook(GetAsyncStateMachineTarget(addCardsMethod), PatchAddCardsIl);
-		_cardPileDrawIlHook = new ILHook(GetAsyncStateMachineTarget(drawMethod), PatchDrawIl);
-		_cardPileCanDrawIlHook = new ILHook(checkCanDrawMethod, PatchCheckCanDrawIl);
-		_handPosGetPositionHook = new Hook(handPosGetPosition, GetPositionDetour);
-		_handPosGetAngleHook = new Hook(handPosGetAngle, GetAngleDetour);
-		_handPosGetScaleHook = new Hook(handPosGetScale, GetScaleDetour);
-		_refreshLayoutHook = new Hook(refreshLayoutMethod, RefreshLayoutDetour);
-		_handCardHoverHook = new Hook(handCardHoverMethod, DoCardHoverEffectsDetour);
-		_onHolderFocusedHook = new Hook(onHolderFocusedMethod, OnHolderFocusedDetour);
-		_onHolderUnfocusedHook = new Hook(onHolderUnfocusedMethod, OnHolderUnfocusedDetour);
-		_hoverTipAlignmentHook = new Hook(hoverTipAlignmentMethod, SetAlignmentForCardHolderDetour);
-		_startCardPlayHook = new Hook(startCardPlayMethod, StartCardPlayDetour);
+		harmony.Patch(GetAsyncStateMachineTarget(addCardsMethod), transpiler: new HarmonyMethod(typeof(ModEntry), nameof(PatchAddCardsTranspiler)));
+		harmony.Patch(GetAsyncStateMachineTarget(drawMethod), transpiler: new HarmonyMethod(typeof(ModEntry), nameof(PatchDrawTranspiler)));
+		harmony.Patch(checkCanDrawMethod, transpiler: new HarmonyMethod(typeof(ModEntry), nameof(PatchCheckCanDrawTranspiler)));
+		harmony.Patch(handPosGetPosition, prefix: new HarmonyMethod(typeof(ModEntry), nameof(GetPositionPrefix)));
+		harmony.Patch(handPosGetAngle, prefix: new HarmonyMethod(typeof(ModEntry), nameof(GetAnglePrefix)));
+		harmony.Patch(handPosGetScale, prefix: new HarmonyMethod(typeof(ModEntry), nameof(GetScalePrefix)));
+		harmony.Patch(
+			refreshLayoutMethod,
+			prefix: new HarmonyMethod(typeof(ModEntry), nameof(RefreshLayoutPrefix)),
+			postfix: new HarmonyMethod(typeof(ModEntry), nameof(RefreshLayoutPostfix)));
+		harmony.Patch(
+			handCardHoverMethod,
+			prefix: new HarmonyMethod(typeof(ModEntry), nameof(DoCardHoverEffectsPrefix)),
+			postfix: new HarmonyMethod(typeof(ModEntry), nameof(DoCardHoverEffectsPostfix)));
+		harmony.Patch(onHolderFocusedMethod, prefix: new HarmonyMethod(typeof(ModEntry), nameof(OnHolderFocusedPrefix)));
+		harmony.Patch(onHolderUnfocusedMethod, prefix: new HarmonyMethod(typeof(ModEntry), nameof(OnHolderUnfocusedPrefix)));
+		harmony.Patch(
+			hoverTipAlignmentMethod,
+			prefix: new HarmonyMethod(typeof(ModEntry), nameof(SetAlignmentForCardHolderPrefix)),
+			postfix: new HarmonyMethod(typeof(ModEntry), nameof(SetAlignmentForCardHolderPostfix)));
+		harmony.Patch(startCardPlayMethod, prefix: new HarmonyMethod(typeof(ModEntry), nameof(StartCardPlayPrefix)));
 	}
 
-	private static void PatchAddCardsIl(ILContext il)
+	private static IEnumerable<CodeInstruction> PatchAddCardsTranspiler(IEnumerable<CodeInstruction> instructions, MethodBase __originalMethod)
 	{
-		ReplaceIntLoads(il, expectedCount: 1);
+		return ReplaceIntLoads(instructions, expectedCount: 1, __originalMethod);
 	}
 
-	private static void PatchDrawIl(ILContext il)
+	private static IEnumerable<CodeInstruction> PatchDrawTranspiler(IEnumerable<CodeInstruction> instructions, MethodBase __originalMethod)
 	{
-		ReplaceIntLoads(il, expectedCount: 3);
+		return ReplaceIntLoads(instructions, expectedCount: 3, __originalMethod);
 	}
 
-	private static void PatchCheckCanDrawIl(ILContext il)
+	private static IEnumerable<CodeInstruction> PatchCheckCanDrawTranspiler(IEnumerable<CodeInstruction> instructions, MethodBase __originalMethod)
 	{
-		ReplaceIntLoads(il, expectedCount: 1);
+		return ReplaceIntLoads(instructions, expectedCount: 1, __originalMethod);
 	}
 
-	private static void ReplaceIntLoads(ILContext il, int expectedCount)
+	private static IEnumerable<CodeInstruction> ReplaceIntLoads(IEnumerable<CodeInstruction> instructions, int expectedCount, MethodBase originalMethod)
 	{
+		List<CodeInstruction> patchedInstructions = instructions.ToList();
 		int patched = 0;
-		foreach (Instruction instruction in il.Method.Body.Instructions)
+		foreach (CodeInstruction instruction in patchedInstructions)
 		{
-				if (!TryGetLoadedInt32(instruction, out int value) || value != 10)
-				{
-					continue;
-				}
-
-				instruction.OpCode = OpCodes.Ldc_I4;
-				instruction.Operand = HandLimit;
-				patched++;
+			if (!TryGetLoadedInt32(instruction, out int value) || value != 10)
+			{
+				continue;
 			}
+
+			instruction.opcode = OpCodes.Ldc_I4;
+			instruction.operand = HandLimit;
+			patched++;
+		}
 
 		if (patched != expectedCount)
 		{
-			throw new InvalidOperationException($"[RemoveHandLimit] Expected to patch {expectedCount} int loads in {il.Method.FullName}, but patched {patched}.");
+			throw new InvalidOperationException($"[RemoveHandLimit] Expected to patch {expectedCount} int loads in {originalMethod.FullDescription()}, but patched {patched}.");
 		}
+
+		return patchedInstructions;
 	}
 
-	private static bool TryGetLoadedInt32(Instruction instruction, out int value)
+	private static bool TryGetLoadedInt32(CodeInstruction instruction, out int value)
 	{
-		switch (instruction.OpCode.Code)
+		OpCode opcode = instruction.opcode;
+		if (opcode == OpCodes.Ldc_I4_M1)
 		{
-		case Code.Ldc_I4_M1:
 			value = -1;
 			return true;
-		case Code.Ldc_I4_0:
+		}
+
+		if (opcode == OpCodes.Ldc_I4_0)
+		{
 			value = 0;
 			return true;
-		case Code.Ldc_I4_1:
+		}
+
+		if (opcode == OpCodes.Ldc_I4_1)
+		{
 			value = 1;
 			return true;
-		case Code.Ldc_I4_2:
+		}
+
+		if (opcode == OpCodes.Ldc_I4_2)
+		{
 			value = 2;
 			return true;
-		case Code.Ldc_I4_3:
+		}
+
+		if (opcode == OpCodes.Ldc_I4_3)
+		{
 			value = 3;
 			return true;
-		case Code.Ldc_I4_4:
+		}
+
+		if (opcode == OpCodes.Ldc_I4_4)
+		{
 			value = 4;
 			return true;
-		case Code.Ldc_I4_5:
+		}
+
+		if (opcode == OpCodes.Ldc_I4_5)
+		{
 			value = 5;
 			return true;
-		case Code.Ldc_I4_6:
+		}
+
+		if (opcode == OpCodes.Ldc_I4_6)
+		{
 			value = 6;
 			return true;
-		case Code.Ldc_I4_7:
+		}
+
+		if (opcode == OpCodes.Ldc_I4_7)
+		{
 			value = 7;
 			return true;
-		case Code.Ldc_I4_8:
+		}
+
+		if (opcode == OpCodes.Ldc_I4_8)
+		{
 			value = 8;
 			return true;
-		case Code.Ldc_I4_S:
-			value = (sbyte)instruction.Operand;
+		}
+
+		if (opcode == OpCodes.Ldc_I4_S && instruction.operand is sbyte shortValue)
+		{
+			value = shortValue;
 			return true;
-		case Code.Ldc_I4:
-			value = (int)instruction.Operand;
+		}
+
+		if (opcode == OpCodes.Ldc_I4 && instruction.operand is int intValue)
+		{
+			value = intValue;
 			return true;
-		default:
-			value = 0;
+		}
+
+		value = 0;
+		return false;
+	}
+
+	private static bool GetPositionPrefix(int handSize, int cardIndex, ref Vector2 __result)
+	{
+		if (handSize <= RowLimit)
+		{
+			return true;
+		}
+
+		ValidateHandIndex(handSize, cardIndex);
+		if (cardIndex < RowLimit)
+		{
+			Vector2 basePosition = GetVanillaPosition(RowLimit, cardIndex);
+			__result = new Vector2(basePosition.X, basePosition.Y + LowerRowYOffset);
 			return false;
 		}
+
+		int upperRowCount = handSize - RowLimit;
+		int upperRowIndex = cardIndex - RowLimit;
+		Vector2 upperBasePosition = GetVanillaPosition(upperRowCount, upperRowIndex);
+		__result = new Vector2(upperBasePosition.X, upperBasePosition.Y + UpperRowYOffset);
+		return false;
 	}
 
-	private static Vector2 GetPositionDetour(OrigGetPosition orig, int handSize, int cardIndex)
+	private static bool GetAnglePrefix(int handSize, int cardIndex, ref float __result)
 	{
 		if (handSize <= RowLimit)
 		{
-			return orig(handSize, cardIndex);
+			return true;
 		}
 
 		ValidateHandIndex(handSize, cardIndex);
 		if (cardIndex < RowLimit)
 		{
-			Vector2 basePosition = orig(RowLimit, cardIndex);
-			return new Vector2(basePosition.X, basePosition.Y + LowerRowYOffset);
+			__result = GetVanillaAngle(RowLimit, cardIndex);
+			return false;
 		}
 
 		int upperRowCount = handSize - RowLimit;
 		int upperRowIndex = cardIndex - RowLimit;
-		Vector2 upperBasePosition = orig(upperRowCount, upperRowIndex);
-		return new Vector2(upperBasePosition.X, upperBasePosition.Y + UpperRowYOffset);
+		__result = GetVanillaAngle(upperRowCount, upperRowIndex) * UpperRowAngleFactor;
+		return false;
 	}
 
-	private static float GetAngleDetour(OrigGetAngle orig, int handSize, int cardIndex)
+	private static bool GetScalePrefix(int handSize, ref Vector2 __result)
 	{
 		if (handSize <= RowLimit)
 		{
-			return orig(handSize, cardIndex);
+			return true;
 		}
 
-		ValidateHandIndex(handSize, cardIndex);
-		if (cardIndex < RowLimit)
+		__result = GetVanillaScale(RowLimit);
+		return false;
+	}
+
+	private static Vector2 GetVanillaPosition(int handSize, int cardIndex)
+	{
+		return VanillaCardPositionData[handSize - 1][cardIndex];
+	}
+
+	private static float GetVanillaAngle(int handSize, int cardIndex)
+	{
+		return VanillaCardAngleData[handSize - 1][cardIndex];
+	}
+
+	private static Vector2 GetVanillaScale(int handSize)
+	{
+		float multiplier = handSize switch
 		{
-			return orig(RowLimit, cardIndex);
+			8 => 0.95f,
+			9 => 0.9f,
+			10 => 0.85f,
+			11 => 0.8f,
+			12 => 0.75f,
+			_ => 1f
+		};
+		return VanillaBaseScale * multiplier;
+	}
+
+	private static bool RefreshLayoutPrefix(NPlayerHand __instance)
+	{
+		if (__instance.ActiveHolders.Count > RowLimit)
+		{
+			SetFocusedHolder(__instance, null);
 		}
 
-		int upperRowCount = handSize - RowLimit;
-		int upperRowIndex = cardIndex - RowLimit;
-		return orig(upperRowCount, upperRowIndex) * UpperRowAngleFactor;
+		return true;
 	}
 
-	private static Vector2 GetScaleDetour(OrigGetScale orig, int handSize)
+	private static void RefreshLayoutPostfix(NPlayerHand __instance)
 	{
-		if (handSize <= RowLimit)
+		UpdateHolderZIndices(__instance);
+	}
+
+	private static void DoCardHoverEffectsPrefix(NHandCardHolder __instance, bool isHovered)
+	{
+		SetHolderHoverState(__instance, isHovered);
+	}
+
+	private static void DoCardHoverEffectsPostfix(NHandCardHolder __instance, bool isHovered)
+	{
+		ApplyHolderZIndex(__instance, isHovered);
+	}
+
+	private static bool OnHolderFocusedPrefix(NPlayerHand __instance, NHandCardHolder holder)
+	{
+		if (__instance.ActiveHolders.Count <= RowLimit)
 		{
-			return orig(handSize);
-		}
-
-		return orig(RowLimit);
-	}
-
-	private static void RefreshLayoutDetour(OrigRefreshLayout orig, NPlayerHand self)
-	{
-		if (self.ActiveHolders.Count > RowLimit)
-		{
-			SetFocusedHolder(self, null);
-		}
-
-		orig(self);
-		UpdateHolderZIndices(self);
-	}
-
-	private static void DoCardHoverEffectsDetour(OrigDoCardHoverEffects orig, NHandCardHolder self, bool isHovered)
-	{
-		SetHolderHoverState(self, isHovered);
-		orig(self, isHovered);
-		ApplyHolderZIndex(self, isHovered);
-	}
-
-	private static void OnHolderFocusedDetour(OrigOnHolderFocused orig, NPlayerHand self, NHandCardHolder holder)
-	{
-		if (self.ActiveHolders.Count <= RowLimit)
-		{
-			orig(self, holder);
-			return;
+			return true;
 		}
 
 		SetHolderHoverState(holder, isHovered: true);
-		SetLastFocusedHolderIndex(self, holder.GetIndex());
+		SetLastFocusedHolderIndex(__instance, holder.GetIndex());
 		if (holder.CardModel != null)
 		{
 			RunManager.Instance.HoveredModelTracker.OnLocalCardHovered(holder.CardModel);
 		}
-		UpdateHolderZIndices(self);
+		UpdateHolderZIndices(__instance);
+		return false;
 	}
 
-	private static void OnHolderUnfocusedDetour(OrigOnHolderUnfocused orig, NPlayerHand self, NHandCardHolder holder)
+	private static bool OnHolderUnfocusedPrefix(NPlayerHand __instance, NHandCardHolder holder)
 	{
-		if (self.ActiveHolders.Count <= RowLimit)
+		if (__instance.ActiveHolders.Count <= RowLimit)
 		{
-			orig(self, holder);
-			return;
+			return true;
 		}
 
 		SetHolderHoverState(holder, isHovered: false);
 		RunManager.Instance.HoveredModelTracker.OnLocalCardUnhovered();
-		UpdateHolderZIndices(self);
+		UpdateHolderZIndices(__instance);
+		return false;
 	}
 
-	private static void SetAlignmentForCardHolderDetour(OrigSetAlignmentForCardHolder orig, NHoverTipSet self, NCardHolder holder)
+	private static bool SetAlignmentForCardHolderPrefix(NHoverTipSet __instance, NCardHolder holder, out bool __state)
 	{
-		orig(self, holder);
-		BringHoverTipToFront(self);
+		__state = CanAlignCardHoverTipSet(__instance, holder);
+		if (!__state)
+		{
+			LogSkippedBlockedHoverTipAlignment();
+		}
+
+		return __state;
 	}
 
-	private static void StartCardPlayDetour(OrigStartCardPlay orig, NPlayerHand self, NHandCardHolder holder, bool startedViaShortcut)
+	private static void SetAlignmentForCardHolderPostfix(NHoverTipSet __instance, bool __state)
 	{
-		StringName[] shortcuts = GetSelectCardShortcuts(self);
+		if (__state)
+		{
+			BringHoverTipToFront(__instance);
+		}
+	}
+
+	private static bool StartCardPlayPrefix(NPlayerHand __instance, NHandCardHolder holder, bool startedViaShortcut)
+	{
+		StringName[] shortcuts = GetSelectCardShortcuts(__instance);
 		int holderIndex = holder.GetIndex();
 		if ((NControllerManager.Instance?.IsUsingController ?? false) || holderIndex < shortcuts.Length)
 		{
-			orig(self, holder, startedViaShortcut);
-			return;
+			return true;
 		}
 
-		SetDraggedHolderIndex(self, holderIndex);
-		GetHoldersAwaitingQueue(self).Add(holder, holderIndex);
-		holder.Reparent(self);
+		SetDraggedHolderIndex(__instance, holderIndex);
+		GetHoldersAwaitingQueue(__instance).Add(holder, holderIndex);
+		holder.Reparent(__instance);
 		holder.BeginDrag();
 
 		NCardPlay currentCardPlay = NMouseCardPlay.Create(holder, MegaInput.releaseCard, startedViaShortcut);
-		SetCurrentCardPlay(self, currentCardPlay);
-		self.AddChildSafely(currentCardPlay);
+		SetCurrentCardPlay(__instance, currentCardPlay);
+		__instance.AddChildSafely(currentCardPlay);
 		currentCardPlay.Connect(NCardPlay.SignalName.Finished, Callable.From(delegate(bool success)
 		{
 			RunManager.Instance.HoveredModelTracker.OnLocalCardDeselected();
 			if (!success)
 			{
-				InvokeReturnHolderToHand(self, holder);
+				InvokeReturnHolderToHand(__instance, holder);
 			}
 
-			SetDraggedHolderIndex(self, -1);
-			InvokeRefreshLayout(self);
+			SetDraggedHolderIndex(__instance, -1);
+			InvokeRefreshLayout(__instance);
 		}));
 
 		CardModel selectedCard = holder.CardNode?.Model ?? throw new InvalidOperationException("[RemoveHandLimit] Tried to start card play without a card node.");
 		RunManager.Instance.HoveredModelTracker.OnLocalCardSelected(selectedCard);
 		currentCardPlay.Start();
-		InvokeRefreshLayout(self);
+		InvokeRefreshLayout(__instance);
 		holder.SetIndexLabel(holderIndex + 1);
+		return false;
+	}
+
+	private static T GetStaticFieldValue<T>(FieldInfo fieldInfo)
+	{
+		return fieldInfo.GetValue(null) is T value
+			? value
+			: throw new InvalidOperationException($"[RemoveHandLimit] Could not read field {fieldInfo.DeclaringType?.FullName}.{fieldInfo.Name}.");
+	}
+
+	private static bool CanAlignCardHoverTipSet(NHoverTipSet hoverTipSet, NCardHolder holder)
+	{
+		if (NHoverTipSet.shouldBlockHoverTips
+			|| !GodotObject.IsInstanceValid(hoverTipSet)
+			|| !GodotObject.IsInstanceValid(holder))
+		{
+			return false;
+		}
+
+		if (HoverTipOwnerField.GetValue(hoverTipSet) is not Control owner || !GodotObject.IsInstanceValid(owner))
+		{
+			return false;
+		}
+
+		Control? hitbox = holder.Hitbox;
+		return hitbox != null && GodotObject.IsInstanceValid(hitbox);
+	}
+
+	private static void LogSkippedBlockedHoverTipAlignment()
+	{
+		if (_loggedSkippedBlockedHoverTipAlignment)
+		{
+			return;
+		}
+
+		_loggedSkippedBlockedHoverTipAlignment = true;
+		Log.Warn("[RemoveHandLimit] Skipped card hover-tip alignment while the hover tip set was blocked or detached.", 1);
 	}
 
 	private static StringName[] GetSelectCardShortcuts(NPlayerHand hand)
@@ -488,6 +571,11 @@ public static class ModEntry
 		if (handSize <= 0)
 		{
 			throw new ArgumentOutOfRangeException(nameof(handSize), handSize, "Hand size must be positive.");
+		}
+
+		if (handSize > HandLimit)
+		{
+			throw new ArgumentOutOfRangeException(nameof(handSize), handSize, $"Hand size {handSize} is greater than {HandLimit}.");
 		}
 
 		if (cardIndex < 0 || cardIndex >= handSize)

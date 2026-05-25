@@ -36,7 +36,6 @@ internal static partial class HextechContentRegistry
         Forge<BufferForge>(HextechRarityTier.Prismatic),
         Forge<SlipperyForge>(HextechRarityTier.Prismatic),
         Forge<PrismaticArtifactForge>(HextechRarityTier.Prismatic),
-        Forge<GhostForge>(HextechRarityTier.Prismatic),
         Forge<FortuneForge>(HextechRarityTier.Prismatic)
     ];
 }

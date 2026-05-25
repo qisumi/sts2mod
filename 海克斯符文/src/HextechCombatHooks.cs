@@ -6,6 +6,7 @@ using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Entities.Powers;
 using MegaCrit.Sts2.Core.Extensions;
 using MegaCrit.Sts2.Core.Factories;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
@@ -81,6 +82,14 @@ internal static partial class HextechCombatHooks
 		harmony.Patch(
 			RequireMethod(typeof(ForbiddenGrimoirePower), nameof(ForbiddenGrimoirePower.AfterCombatEnd), BindingFlags.Public | BindingFlags.Instance, typeof(CombatRoom)),
 			prefix: new HarmonyMethod(typeof(HextechCombatHooks), nameof(ForbiddenGrimoireAfterCombatEndPrefix)));
+		harmony.Patch(
+			RequireMethod(typeof(OutbreakPower), nameof(OutbreakPower.AfterPowerAmountChanged), BindingFlags.Public | BindingFlags.Instance, typeof(PowerModel), typeof(decimal), typeof(Creature), typeof(CardModel)),
+			prefix: new HarmonyMethod(typeof(HextechCombatHooks), nameof(OutbreakPowerAfterPowerAmountChangedPrefix)),
+			postfix: new HarmonyMethod(typeof(HextechCombatHooks), nameof(OutbreakPowerAfterPowerAmountChangedPostfix)));
+		harmony.Patch(
+			RequireMethod(typeof(SleightOfFleshPower), nameof(SleightOfFleshPower.AfterPowerAmountChanged), BindingFlags.Public | BindingFlags.Instance, typeof(PowerModel), typeof(decimal), typeof(Creature), typeof(CardModel)),
+			prefix: new HarmonyMethod(typeof(HextechCombatHooks), nameof(SleightOfFleshPowerAfterPowerAmountChangedPrefix)),
+			postfix: new HarmonyMethod(typeof(HextechCombatHooks), nameof(SleightOfFleshPowerAfterPowerAmountChangedPostfix)));
 		harmony.Patch(
 			RequireMethod(
 				typeof(CreatureCmd),

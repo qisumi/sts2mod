@@ -69,7 +69,7 @@ public sealed class InfernalConduitRune : HextechRelicBase
 			return;
 		}
 
-		await PowerCmd.Apply<HextechBurnPower>(target, 3m, Owner.Creature, cardSource);
+		await PowerCmd.Apply<HextechBurnPower>(target, 2m, Owner.Creature, cardSource);
 	}
 
 	public override Task BeforeTurnEnd(PlayerChoiceContext choiceContext, CombatSide side)

@@ -69,7 +69,7 @@ public sealed class InfernalDragonSoulCard : DragonSoulCardBase
 
 	protected override IEnumerable<DynamicVar> CanonicalVars =>
 	[
-		new DynamicVar("BurnPower", 8m)
+		new DynamicVar("BurnPower", 6m)
 	];
 
 	protected override IEnumerable<IHoverTip> ExtraHoverTips =>
@@ -190,7 +190,7 @@ public sealed class CloudDragonSoulCard : DragonSoulCardBase
 	}
 }
 
-public sealed class HextechOceanDragonSoulPower : PowerModel
+public sealed class HextechOceanDragonSoulPower : HextechPowerBase
 {
 	public override PowerType Type => PowerType.Buff;
 
@@ -208,7 +208,7 @@ public sealed class HextechOceanDragonSoulPower : PowerModel
 	}
 }
 
-public sealed class HextechInfernalDragonSoulPower : PowerModel
+public sealed class HextechInfernalDragonSoulPower : HextechPowerBase
 {
 	private bool _triggeredThisTurn;
 
@@ -288,7 +288,7 @@ public sealed class HextechDragonSoulPower : PowerModel
 	}
 }
 
-public sealed class HextechMountainDragonSoulPower : PowerModel
+public sealed class HextechMountainDragonSoulPower : HextechPowerBase
 {
 	public override PowerType Type => PowerType.Buff;
 
@@ -306,7 +306,7 @@ public sealed class HextechMountainDragonSoulPower : PowerModel
 	}
 }
 
-public sealed class HextechChemtechDragonSoulPower : PowerModel
+public sealed class HextechChemtechDragonSoulPower : HextechPowerBase
 {
 	public override PowerType Type => PowerType.Buff;
 

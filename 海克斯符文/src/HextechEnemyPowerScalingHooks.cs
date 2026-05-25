@@ -188,7 +188,8 @@ internal static class HextechEnemyPowerScalingHooks
 		if (powerType == typeof(HardenedShellPower)
 			|| powerType == typeof(RegenPower)
 			|| powerType == typeof(PlatingPower)
-			|| powerType == typeof(ReflectPower))
+			|| powerType == typeof(ReflectPower)
+			|| powerType == typeof(SkittishPower))
 		{
 			return ScalingOverride.Unscaled;
 		}
@@ -328,6 +329,7 @@ internal static class HextechEnemyPowerScalingHooks
 		yield return typeof(RegenPower);
 		yield return typeof(PlatingPower);
 		yield return typeof(ReflectPower);
+		yield return typeof(SkittishPower);
 	}
 
 	private static bool ContainsMethod(IEnumerable<MethodInfo> methods, MethodInfo candidate)

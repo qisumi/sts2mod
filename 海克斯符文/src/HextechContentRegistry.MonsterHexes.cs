@@ -21,6 +21,7 @@ internal static partial class HextechContentRegistry
         Monster<StartupRoutineRune>(MonsterHexKind.StartupRoutine, HextechRarityTier.Silver),
         Monster<DizzySpinningRune>(MonsterHexKind.DizzySpinning, HextechRarityTier.Silver),
         Monster<BrutalForceRune>(MonsterHexKind.BrutalForce, HextechRarityTier.Silver),
+        Monster<ZealotRune>(MonsterHexKind.Zealot, HextechRarityTier.Silver),
 
         Monster<SturdyRune>(MonsterHexKind.Sturdy, HextechRarityTier.Gold),
         Monster<DawnbringersResolveRune>(MonsterHexKind.DawnbringersResolve, HextechRarityTier.Gold),
@@ -47,6 +48,7 @@ internal static partial class HextechContentRegistry
         Monster<MirrorReflectionRune>(MonsterHexKind.MirrorReflection, HextechRarityTier.Gold),
         Monster<BlueCandleMedkitRune>(MonsterHexKind.BlueCandleMedkit, HextechRarityTier.Gold),
         Monster<TanksShieldRune>(MonsterHexKind.TanksShield, HextechRarityTier.Gold),
+        Monster<ScaredStiffRune>(MonsterHexKind.ScaredStiff, HextechRarityTier.Gold),
 
         Monster<CourageOfColossusRune>(MonsterHexKind.CourageOfColossus, HextechRarityTier.Prismatic),
         Monster<GlassCannonRune>(MonsterHexKind.GlassCannon, HextechRarityTier.Prismatic),
@@ -75,6 +77,10 @@ internal static partial class HextechContentRegistry
         Monster<MiseryRune>(MonsterHexKind.Misery, HextechRarityTier.Prismatic),
         Monster<ShoulderVakuRune>(MonsterHexKind.ShoulderVaku, HextechRarityTier.Prismatic),
         Monster<UpgradeRune>(MonsterHexKind.Upgrade, HextechRarityTier.Prismatic),
-        Monster<NearDeathFeastRune>(MonsterHexKind.NearDeathFeast, HextechRarityTier.Prismatic)
+        Monster<NearDeathFeastRune>(MonsterHexKind.NearDeathFeast, HextechRarityTier.Prismatic),
+        Monster<GhostFormRune>(MonsterHexKind.GhostForm, HextechRarityTier.Prismatic),
+        Monster<SerpentsFangRune>(MonsterHexKind.SerpentsFang, HextechRarityTier.Prismatic),
+        Monster<PandorasBoxRune>(MonsterHexKind.PandorasBox, HextechRarityTier.Prismatic),
+        Monster<ForbiddenGrimoireRune>(MonsterHexKind.ForbiddenGrimoire, HextechRarityTier.Prismatic)
     ];
 }

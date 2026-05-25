@@ -1,8 +1,8 @@
 {
   "elicitCard.title": "激发",
   "ELICIT_CARD.title": "激发",
-  "elicitCard.description": "激发你的所有充能球。{IfUpgraded:show:抽[blue]{Cards}[/blue]张牌。|}",
-  "ELICIT_CARD.description": "激发你的所有充能球。{IfUpgraded:show:抽[blue]{Cards}[/blue]张牌。|}",
+  "elicitCard.description": "激发你的所有充能球[blue]{Repeat}[/blue]次。",
+  "ELICIT_CARD.description": "激发你的所有充能球[blue]{Repeat}[/blue]次。",
   "elicitCard.flavor": "把它们一口气全放出去。",
   "ELICIT_CARD.flavor": "把它们一口气全放出去。",
   "trickMagicCard.title": "欺诈魔术",

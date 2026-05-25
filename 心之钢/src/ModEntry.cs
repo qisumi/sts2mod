@@ -1,5 +1,4 @@
-using System.Reflection;
-using System.Runtime.Loader;
+using HarmonyLib;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Models.RelicPools;
@@ -10,35 +9,17 @@ namespace Heartsteel;
 [ModInitializer(nameof(Initialize))]
 public static class ModEntry
 {
+	private const string HarmonyId = "Natsuki.Heartsteel";
+
+	private static Harmony? HarmonyInstance;
+
 	public static void Initialize()
 	{
-		PreloadDependencyAssemblies();
+		Harmony harmony = HarmonyInstance ??= new Harmony(HarmonyId);
 		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(HeartsteelRelic));
 		ModHelper.AddModelToPool<SharedRelicPool, HeartsteelRelic>();
-		AssetHooks.Install();
-		OrnnsForgeRegistration.Install();
+		AssetHooks.Install(harmony);
+		OrnnsForgeRegistration.Install(harmony);
 		Log.Info($"[{ModInfo.Id}] Loaded for Slay the Spire 2 {ModInfo.TargetGameVersion}.");
-	}
-
-	private static void PreloadDependencyAssemblies()
-	{
-		Assembly assembly = Assembly.GetExecutingAssembly();
-		string? modDirectory = Path.GetDirectoryName(assembly.Location);
-		if (string.IsNullOrEmpty(modDirectory) || !Directory.Exists(modDirectory))
-		{
-			return;
-		}
-
-		string selfPath = assembly.Location;
-		AssemblyLoadContext loadContext = AssemblyLoadContext.GetLoadContext(assembly) ?? AssemblyLoadContext.Default;
-		foreach (string dllPath in Directory.GetFiles(modDirectory, "*.dll"))
-		{
-			if (string.Equals(dllPath, selfPath, StringComparison.OrdinalIgnoreCase))
-			{
-				continue;
-			}
-
-			loadContext.LoadFromAssemblyPath(dllPath);
-		}
 	}
 }

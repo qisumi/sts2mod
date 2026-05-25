@@ -36,19 +36,27 @@ namespace HextechRunes;
 
 public sealed class InfiniteLoopRune : HextechRelicBase, IHextechSharedCombatVictoryRune
 {
-	private int _combatVictories;
+	private int _stacks;
 
 	[SavedProperty(SerializationCondition.SaveIfNotTypeDefault)]
 	public int SavedCombatVictories
 	{
-		get => _combatVictories;
-		set => _combatVictories = Math.Max(0, value);
+		get => _stacks;
+		set
+		{
+			_stacks = Math.Max(0, value);
+			InvokeDisplayAmountChanged();
+		}
 	}
+
+	public override bool ShowCounter => true;
+
+	public override int DisplayAmount => !IsCanonical ? _stacks : 0;
 
 	protected override IEnumerable<DynamicVar> CanonicalVars =>
 	[
 		new EnergyVar(1),
-		new DynamicVar("Combats", 4m)
+		new DynamicVar("StacksPerEnergy", 4m)
 	];
 
 	public override decimal ModifyMaxEnergy(Player player, decimal amount)
@@ -58,7 +66,7 @@ public sealed class InfiniteLoopRune : HextechRelicBase, IHextechSharedCombatVic
 			return amount;
 		}
 
-		return amount + DynamicVars.Energy.BaseValue + FloorToInt(_combatVictories / DynamicVars["Combats"].BaseValue);
+		return amount + DynamicVars.Energy.BaseValue + FloorToInt(_stacks / DynamicVars["StacksPerEnergy"].BaseValue);
 	}
 
 	public override Task AfterCombatVictory(CombatRoom room)
@@ -76,6 +84,7 @@ public sealed class InfiniteLoopRune : HextechRelicBase, IHextechSharedCombatVic
 		if (Owner != null && !Owner.Creature.IsDead)
 		{
 			SavedCombatVictories++;
+			Flash(Array.Empty<Creature>());
 		}
 
 		return Task.CompletedTask;

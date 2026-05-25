@@ -7,8 +7,10 @@ namespace AITeammate.Scripts;
 
 internal sealed class CombatTurnLinePlanner
 {
-    private const int MaxLineLength = 5;
-    private const int BeamWidth = 12;
+    private const int MaxLineLength = 8;
+    private const int SearchNodeBudget = 16_000;
+    private const int SearchBranchWidth = 12;
+    private const int ImmediateActionBiasDivisor = 4;
     private const int AllEnemiesLethalLineBonus = 10000;
     private const int NonMinionLethalLineBonus = 13500;
     private const int NonMinionLethalMinionDamagePenaltyPerPoint = 28;
@@ -45,6 +47,11 @@ internal sealed class CombatTurnLinePlanner
 
     public CombatLinePlan? BuildBestPlan(DeterministicCombatContext context)
     {
+        return BuildCandidatePlans(context, maxPlans: 1).FirstOrDefault();
+    }
+
+    public IReadOnlyList<CombatLinePlan> BuildCandidatePlans(DeterministicCombatContext context, int maxPlans)
+    {
         List<PlannableAction> executableActions = context.LegalActions
             .Select(action => BuildPlannableAction(context, action))
             .Where(static action => !action.IsEndTurn)
@@ -54,70 +61,20 @@ internal sealed class CombatTurnLinePlanner
             .ToList();
         if (actions.Count == 0)
         {
-            return null;
+            return [];
         }
 
-        CombatLinePlan? immediateLethal = context.IsLagavulinMatriarchOpeningSetupWindow
-            ? null
-            : TryBuildImmediateLethalPlan(context, executableActions, actions);
-        if (immediateLethal != null)
+        List<LineNode> bestNodes = EnumerateShadowSearchNodes(context, actions);
+        if (bestNodes.Count == 0)
         {
-            return immediateLethal;
+            return [];
         }
 
-        List<LineNode> frontier = SelectInitialFrontier(context, executableActions)
-            .Select(action => CreateInitialNode(context, action))
-            .ToList();
-        if (frontier.Count == 0)
-        {
-            return null;
-        }
-
-        List<LineNode> bestNodes = frontier.ToList();
-
-        for (int depth = 1; depth < MaxLineLength; depth++)
-        {
-            List<LineNode> nextFrontier = [];
-            foreach (LineNode node in frontier)
-            {
-                if (node.StopExpanding)
-                {
-                    continue;
-                }
-
-                foreach (PlannableAction candidate in actions)
-                {
-                    if (!ShouldConsiderLineAction(context, node, candidate))
-                    {
-                        continue;
-                    }
-
-                    if (!node.CanApply(context, candidate, actions))
-                    {
-                        continue;
-                    }
-
-                    nextFrontier.Add(node.Apply(context, candidate));
-                }
-            }
-
-            if (nextFrontier.Count == 0)
-            {
-                break;
-            }
-
-            frontier = nextFrontier
-                .OrderByDescending(node => node.ComputeTerminalScore(context, actions))
-                .ThenBy(node => string.Join("|", node.ActionIds), StringComparer.Ordinal)
-                .Take(BeamWidth)
-                .ToList();
-            bestNodes.AddRange(frontier);
-        }
-
-        LineNode best = bestNodes
+        List<LineNode> orderedNodes = bestNodes
             .OrderByDescending(node => node.ComputeTerminalScore(context, actions))
             .ThenBy(node => string.Join("|", node.ActionIds), StringComparer.Ordinal)
-            .First();
+            .ToList();
+        LineNode best = orderedNodes.First();
         LineNode? nonMinionLethal = bestNodes
             .Where(node => node.KillsAllNonMinionEnemies(context))
             .OrderByDescending(node => node.ComputeTerminalScore(context, actions))
@@ -128,53 +85,152 @@ internal sealed class CombatTurnLinePlanner
             best = nonMinionLethal;
         }
 
-        PlannableAction? firstAction = actions.FirstOrDefault(action => string.Equals(action.Action.ActionId, best.ActionIds.FirstOrDefault(), StringComparison.Ordinal));
-        if (firstAction != null &&
-            string.Equals(firstAction.Action.ActionType, AiTeammateActionKind.UsePotion.ToString(), StringComparison.Ordinal) &&
-            firstAction.ImmediateScore.TotalScore <= 0 &&
-            best.ComputeTerminalScore(context, actions) < AllEnemiesLethalLineBonus)
+        List<CombatLinePlan> plans = [];
+        AddPlanIfWorthKeeping(ToPlan(best, context, actions));
+        foreach (LineNode node in orderedNodes)
         {
-            return null;
+            if (plans.Count >= Math.Max(1, maxPlans))
+            {
+                break;
+            }
+
+            if (plans.Any(plan => plan.ActionIds.SequenceEqual(node.ActionIds)))
+            {
+                continue;
+            }
+
+            AddPlanIfWorthKeeping(ToPlan(node, context, actions));
         }
 
+        return plans;
+
+        void AddPlanIfWorthKeeping(CombatLinePlan plan)
+        {
+            if (!IsWastefulPotionLedPlan(context, plan, actions))
+            {
+                plans.Add(plan);
+            }
+        }
+    }
+
+    private static CombatLinePlan ToPlan(
+        LineNode node,
+        DeterministicCombatContext context,
+        IReadOnlyList<PlannableAction> actions)
+    {
         return new CombatLinePlan
         {
-            ActionIds = best.ActionIds.ToList(),
-            Score = best.ComputeTerminalScore(context, actions),
-            EstimatedDamageDealt = best.TotalDamageDealt,
-            EstimatedDamageTaken = best.EstimatedDamageTaken(context),
-            EstimatedBlockAfterEnemyTurn = best.EstimatedBlockAfterEnemyTurn(context)
+            ActionIds = node.ActionIds.ToList(),
+            Score = node.ComputeTerminalScore(context, actions),
+            EstimatedDamageDealt = node.TotalDamageDealt,
+            EstimatedDamageTaken = node.EstimatedDamageTaken(context),
+            EstimatedBlockAfterEnemyTurn = node.EstimatedBlockAfterEnemyTurn(context)
         };
     }
 
-    private static CombatLinePlan? TryBuildImmediateLethalPlan(
+    private static bool IsWastefulPotionLedPlan(
         DeterministicCombatContext context,
-        IReadOnlyList<PlannableAction> executableActions,
-        IReadOnlyList<PlannableAction> allActions)
+        CombatLinePlan plan,
+        IReadOnlyList<PlannableAction> actions)
     {
-        LineNode initial = new(context.Energy, context.Stars);
-        LineNode? best = executableActions
-            .Where(action => initial.CanApply(context, action, executableActions))
-            .Select(action => CreateInitialNode(context, action))
-            .Where(node => node.KillsAllEnemies(context))
-            .OrderByDescending(node => node.ComputeTerminalScore(context, allActions))
-            .ThenByDescending(node => node.TotalDamageDealt)
-            .ThenBy(node => node.ActionIds.FirstOrDefault() ?? string.Empty, StringComparer.Ordinal)
-            .FirstOrDefault();
-
-        if (best == null)
+        string? firstActionId = plan.FirstActionId;
+        if (string.IsNullOrEmpty(firstActionId))
         {
-            return null;
+            return false;
         }
 
-        return new CombatLinePlan
+        PlannableAction? firstAction = actions.FirstOrDefault(action =>
+            string.Equals(action.Action.ActionId, firstActionId, StringComparison.Ordinal));
+        if (firstAction == null ||
+            !string.Equals(firstAction.Action.ActionType, AiTeammateActionKind.UsePotion.ToString(), StringComparison.Ordinal) ||
+            firstAction.ImmediateScore.TotalScore > 0)
         {
-            ActionIds = best.ActionIds.ToList(),
-            Score = best.ComputeTerminalScore(context, allActions),
-            EstimatedDamageDealt = best.TotalDamageDealt,
-            EstimatedDamageTaken = best.EstimatedDamageTaken(context),
-            EstimatedBlockAfterEnemyTurn = best.EstimatedBlockAfterEnemyTurn(context)
-        };
+            return false;
+        }
+
+        if (context.IsTeamInCrisis ||
+            context.ShouldSpendPotionSlotForFutureDrop ||
+            plan.EstimatedDamageDealt >= Math.Max(1, context.TotalEnemyHp) ||
+            plan.EstimatedDamageTaken < Math.Max(0, context.IncomingDamageAfterBlock - 8))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static List<LineNode> EnumerateShadowSearchNodes(
+        DeterministicCombatContext context,
+        IReadOnlyList<PlannableAction> actions)
+    {
+        List<LineNode> nodes = [];
+        LineNode root = new(context.Energy, context.Stars);
+        int visitedNodes = 0;
+
+        Expand(root, depth: 0);
+        return nodes;
+
+        void Expand(LineNode node, int depth)
+        {
+            if (visitedNodes >= SearchNodeBudget ||
+                depth >= MaxLineLength ||
+                node.StopExpanding)
+            {
+                return;
+            }
+
+            List<PlannableAction> candidates = actions
+                .Where(action => ShouldConsiderLineAction(action) &&
+                                 node.CanApply(context, action, actions))
+                .OrderByDescending(action => EstimateSearchBranchPriority(context, node, action))
+                .ThenBy(static action => action.ConsumptionKey, StringComparer.Ordinal)
+                .ThenBy(static action => action.Action.ActionId, StringComparer.Ordinal)
+                .Take(SearchBranchWidth)
+                .ToList();
+            foreach (PlannableAction candidate in candidates)
+            {
+                if (visitedNodes >= SearchNodeBudget)
+                {
+                    return;
+                }
+
+                LineNode next = node.Apply(context, candidate);
+                visitedNodes++;
+                nodes.Add(next);
+                Expand(next, depth + 1);
+            }
+        }
+    }
+
+    private static int EstimateSearchBranchPriority(
+        DeterministicCombatContext context,
+        LineNode node,
+        PlannableAction action)
+    {
+        int priority = action.ImmediateScore.TotalScore / Math.Max(1, ImmediateActionBiasDivisor);
+        priority += action.Damage * 16;
+        priority += action.Block * (context.TeamIncomingDamageAfterBlock > 0 ? 11 : 2);
+        priority += action.SummonProtection * (context.TeamIncomingDamageAfterBlock > 0 ? 13 : 3);
+        priority += action.IsEnemyDebuff ? 260 : 0;
+        priority += action.IsSetup ? 120 : 0;
+        priority += action.CardsDrawn > action.KnownBadDraws ? 90 : 0;
+        priority += action.EnergyGain > 0 || action.StarsGenerated > 0 ? 70 : 0;
+        if (context.TeamTactics.CanKillAllNonMinionEnemies && CanDamageNonMinionEnemy(context, action))
+        {
+            priority += 800;
+        }
+
+        if (node.HasPreparedVulnerableTarget(context, action) && action.Damage > 0)
+        {
+            priority += 180;
+        }
+
+        if (action.IsResourcePotion && !context.IsEliteOrBossCombat && !context.IsTeamInCrisis)
+        {
+            priority -= 180;
+        }
+
+        return priority;
     }
 
     private PlannableAction BuildPlannableAction(
@@ -317,134 +373,14 @@ internal sealed class CombatTurnLinePlanner
         };
     }
 
-    private static LineNode CreateInitialNode(DeterministicCombatContext context, PlannableAction action)
-    {
-        LineNode node = new(context.Energy, context.Stars);
-        return node.Apply(context, action);
-    }
-
-    private static List<PlannableAction> SelectInitialFrontier(DeterministicCombatContext context, IReadOnlyList<PlannableAction> executableActions)
-    {
-        List<PlannableAction> selected = executableActions
-            .Where(action =>
-            {
-                LineNode initial = new(context.Energy, context.Stars);
-                return ShouldConsiderLineAction(context, initial, action) &&
-                       initial.CanApply(context, action, executableActions);
-            })
-            .OrderByDescending(static action => action.ImmediateScore.TotalScore)
-            .ThenBy(static action => action.Action.ActionId, StringComparer.Ordinal)
-            .Take(BeamWidth)
-            .ToList();
-
-        foreach (PlannableAction action in executableActions.Where(static action => action.IsSetupPotion || action.IsOffensivePotion || action.IsEnemyDebuff))
-        {
-            if (new LineNode(context.Energy, context.Stars).CanApply(context, action, executableActions) &&
-                selected.All(selectedAction => !string.Equals(selectedAction.ConsumptionKey, action.ConsumptionKey, StringComparison.Ordinal)))
-            {
-                selected.Add(action);
-            }
-        }
-
-        if (context.TeamTactics.CanKillAllNonMinionEnemies)
-        {
-            foreach (PlannableAction action in executableActions.Where(action => CanDamageNonMinionEnemy(context, action)))
-            {
-                if (new LineNode(context.Energy, context.Stars).CanApply(context, action, executableActions) &&
-                    selected.All(selectedAction => !string.Equals(selectedAction.ConsumptionKey, action.ConsumptionKey, StringComparison.Ordinal)))
-                {
-                    selected.Add(action);
-                }
-            }
-        }
-
-        if (context.IsLagavulinMatriarchOpeningSetupWindow)
-        {
-            foreach (PlannableAction action in executableActions.Where(IsLagavulinSleepSetupAction))
-            {
-                if (new LineNode(context.Energy, context.Stars).CanApply(context, action, executableActions) &&
-                    selected.All(selectedAction => !string.Equals(selectedAction.ConsumptionKey, action.ConsumptionKey, StringComparison.Ordinal)))
-                {
-                    selected.Add(action);
-                }
-            }
-        }
-
-        return selected;
-    }
-
-    private static bool IsLagavulinSleepSetupAction(PlannableAction action)
-    {
-        return action.Damage <= 0 &&
-               !action.IsEndTurn &&
-               (action.IsSetup ||
-                action.IsEnemyDebuff ||
-                action.Block > 0 ||
-                action.SummonProtection > 0 ||
-                action.CardsDrawn > 0 ||
-                action.EnergyGain > 0 ||
-                action.SelfStrength > 0 ||
-                action.SelfTemporaryStrength > 0 ||
-                action.SelfDexterity > 0 ||
-                action.SelfTemporaryDexterity > 0 ||
-                action.SpecialSetupScore > 0);
-    }
-
-    private static bool ShouldConsiderLineAction(DeterministicCombatContext context, LineNode node, PlannableAction action)
+    private static bool ShouldConsiderLineAction(PlannableAction action)
     {
         if (action.IsEndTurn)
         {
             return false;
         }
 
-        if (action.ImmediateScore.TotalScore >= 0)
-        {
-            return true;
-        }
-
-        if (action.IsHandCleanup && action.HandCleanupScore > 0)
-        {
-            return true;
-        }
-
-        if (IsPotionAction(action))
-        {
-            return context.IsTeamInCrisis &&
-                   (action.IsOffensivePotion || action.IsSetupPotion);
-        }
-
-        if (action.IsEnemyDebuff)
-        {
-            return true;
-        }
-
-        if (action.IsSetup &&
-            (action.SpecialSetupScore > 0 ||
-             action.SelfStrength > 0 ||
-             action.SelfTemporaryStrength > 0 ||
-             action.SelfDexterity > 0 ||
-             action.SelfTemporaryDexterity > 0 ||
-             action.CardsDrawn > action.KnownBadDraws ||
-             action.EnergyGain > 0 ||
-             action.StarsGenerated > 0))
-        {
-            return true;
-        }
-
-        if (context.TeamTactics.CanKillAllNonMinionEnemies &&
-            CanDamageNonMinionEnemy(context, action))
-        {
-            return true;
-        }
-
-        if (context.IsLagavulinMatriarchOpeningSetupWindow &&
-            IsLagavulinSleepSetupAction(action))
-        {
-            return true;
-        }
-
-        return action.Damage > 0 &&
-               node.HasPreparedVulnerableTarget(context, action);
+        return true;
     }
 
     private static bool CanDamageNonMinionEnemy(DeterministicCombatContext context, PlannableAction action)
@@ -462,11 +398,6 @@ internal sealed class CombatTurnLinePlanner
         return !string.IsNullOrEmpty(action.Action.TargetId) &&
                context.EnemiesById.TryGetValue(action.Action.TargetId, out DeterministicEnemyState? enemy) &&
                !enemy.IsLikelySummonedAdd;
-    }
-
-    private static bool IsPotionAction(PlannableAction action)
-    {
-        return string.Equals(action.Action.ActionType, AiTeammateActionKind.UsePotion.ToString(), StringComparison.Ordinal);
     }
 
     private IEnumerable<PlannableAction> BuildKnownDrawPlannableActions(DeterministicCombatContext context)
@@ -547,7 +478,11 @@ internal sealed class CombatTurnLinePlanner
     {
         if (action.ActionId.StartsWith("virtual_draw_", StringComparison.Ordinal))
         {
-            return $"virtual:{action.ActionId}";
+            int targetIndex = action.ActionId.IndexOf("_target_", StringComparison.Ordinal);
+            string virtualUseId = targetIndex > 0
+                ? action.ActionId[..targetIndex]
+                : action.ActionId;
+            return $"virtual:{virtualUseId}";
         }
 
         if (!string.IsNullOrEmpty(action.CardInstanceId))
@@ -915,8 +850,7 @@ internal sealed class CombatTurnLinePlanner
         private readonly HashSet<string> _consumedKeys = new(StringComparer.Ordinal);
         private readonly Dictionary<string, int> _damageByTargetId = new(StringComparer.Ordinal);
         private readonly HashSet<string> _deadEnemyIds = new(StringComparer.Ordinal);
-        private readonly HashSet<string> _vulnerableTargets = new(StringComparer.Ordinal);
-        private readonly HashSet<string> _weakenedTargets = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, ShadowEnemyState> _enemyStates = new(StringComparer.Ordinal);
 
         public LineNode(int energyRemaining, int starsRemaining)
         {
@@ -932,8 +866,10 @@ internal sealed class CombatTurnLinePlanner
             _consumedKeys = new HashSet<string>(other._consumedKeys, StringComparer.Ordinal);
             _damageByTargetId = new Dictionary<string, int>(other._damageByTargetId, StringComparer.Ordinal);
             _deadEnemyIds = new HashSet<string>(other._deadEnemyIds, StringComparer.Ordinal);
-	            _vulnerableTargets = new HashSet<string>(other._vulnerableTargets, StringComparer.Ordinal);
-	            _weakenedTargets = new HashSet<string>(other._weakenedTargets, StringComparer.Ordinal);
+            _enemyStates = other._enemyStates.ToDictionary(
+                static pair => pair.Key,
+                static pair => pair.Value.Clone(),
+                StringComparer.Ordinal);
             LastSingleEnemyTargetId = other.LastSingleEnemyTargetId;
 	            BaseScore = other.BaseScore;
 	            TotalDamageDealt = other.TotalDamageDealt;
@@ -1004,20 +940,16 @@ internal sealed class CombatTurnLinePlanner
 
         public bool HasPreparedVulnerableTarget(DeterministicCombatContext context, PlannableAction action)
         {
-            foreach (KeyValuePair<string, DeterministicEnemyState> target in ResolveEnemyTargets(context, action, action.DamagesAllEnemies))
+            EnsureShadowEnemies(context);
+            foreach (ShadowEnemyState target in ResolveShadowEnemyTargets(context, action, action.DamagesAllEnemies))
             {
-                if (_vulnerableTargets.Contains(target.Key))
+                if (target.HasVulnerable)
                 {
                     return true;
                 }
             }
 
             return false;
-        }
-
-        public bool CanApply(PlannableAction action)
-        {
-            return CanApply(null, action);
         }
 
         public bool CanApply(
@@ -1063,6 +995,13 @@ internal sealed class CombatTurnLinePlanner
             }
 
             if (context != null &&
+                action.Damage > 0 &&
+                !HasLiveDamageTarget(context, action))
+            {
+                return false;
+            }
+
+            if (context != null &&
                 action.IsSetupPotion &&
                 !HasUsefulFollowUpAfter(context, action))
             {
@@ -1096,6 +1035,7 @@ internal sealed class CombatTurnLinePlanner
 
         public LineNode Apply(DeterministicCombatContext context, PlannableAction action)
         {
+            AiCombatCoreWeights core = context.CombatConfig.Combat.CoreWeights;
             AiCombatStatusWeights status = context.CombatConfig.Combat.StatusWeights;
             AiCombatResourceWeights resource = context.CombatConfig.Combat.ResourceWeights;
             LineNode next = new(this)
@@ -1103,16 +1043,18 @@ internal sealed class CombatTurnLinePlanner
                 EnergyRemaining = Math.Max(0, EnergyRemaining - action.EnergyCost + action.EnergyGain),
                 StarsRemaining = Math.Max(0, StarsRemaining - action.StarCost + action.StarsGenerated)
             };
+            next.EnsureShadowEnemies(context);
             next.ActionIds.Add(action.Action.ActionId);
             next._consumedKeys.Add(action.ConsumptionKey);
             if (!string.IsNullOrEmpty(action.Action.TargetId) &&
                 !action.DamagesAllEnemies &&
-                context.EnemiesById.ContainsKey(action.Action.TargetId))
+                next._enemyStates.TryGetValue(action.Action.TargetId, out ShadowEnemyState? lastTarget) &&
+                !lastTarget.IsDead)
             {
                 next.LastSingleEnemyTargetId = action.Action.TargetId;
             }
 
-            next.BaseScore += action.ImmediateScore.TotalScore;
+            next.BaseScore += action.ImmediateScore.TotalScore / Math.Max(1, ImmediateActionBiasDivisor);
             next.EnergyGenerated += action.EnergyGain;
             next.StarsGenerated += action.StarsGenerated;
             next.CardsDrawn += action.CardsDrawn;
@@ -1142,17 +1084,19 @@ internal sealed class CombatTurnLinePlanner
 	                }
 	            }
 
-            foreach (KeyValuePair<string, DeterministicEnemyState> target in ResolveEnemyTargets(context, action, action.AppliesVulnerableToAllEnemies || action.AppliesWeakToAllEnemies))
+            foreach (ShadowEnemyState target in next.ResolveShadowEnemyTargets(context, action, action.AppliesVulnerableToAllEnemies || action.AppliesWeakToAllEnemies))
             {
                 if (action.AppliesVulnerable)
                 {
-                    next._vulnerableTargets.Add(target.Key);
+                    target.ApplyVulnerable();
                 }
 
                 if (action.Weak > 0)
                 {
-                    next._weakenedTargets.Add(target.Key);
-                    next.DamagePreventedByWeak += Math.Max(1, target.Value.IncomingDamage / 4);
+                    if (target.ApplyWeak(out int preventedDamage))
+                    {
+                        next.DamagePreventedByWeak += preventedDamage;
+                    }
                 }
             }
 
@@ -1189,35 +1133,38 @@ internal sealed class CombatTurnLinePlanner
 
             if (action.Damage > 0)
             {
-                foreach (KeyValuePair<string, DeterministicEnemyState> target in ResolveEnemyTargets(context, action, action.DamagesAllEnemies))
+                foreach (ShadowEnemyState target in next.ResolveShadowEnemyTargets(context, action, action.DamagesAllEnemies))
                 {
                     int dealtDamage = action.Damage + (next.StrengthGained + next.TemporaryStrengthGained) * action.StrengthScalingHits;
-                    if (next._vulnerableTargets.Contains(target.Key))
+                    if (target.HasVulnerable)
                     {
                         dealtDamage += (int)Math.Ceiling(dealtDamage * 0.5m);
                     }
 
-		                    dealtDamage = CombatActionScorer.EstimateEffectiveDamageAgainstEnemy(target.Value, dealtDamage, action.DamageHits);
-		                    next.TotalDamageDealt += dealtDamage;
-                    if (action.PunishableAttackHits > 0 && target.Value.PunishesAttacks)
+                    int effectiveDamage = CombatActionScorer.EstimateEffectiveDamageAgainstEnemy(target.Source, dealtDamage, action.DamageHits);
+                    int usefulDamage = target.ApplyEffectiveDamage(effectiveDamage, out bool killedEnemy);
+                    next.TotalDamageDealt += usefulDamage;
+                    int wastedDamage = Math.Max(0, effectiveDamage - usefulDamage);
+                    if (wastedDamage > 0)
                     {
-                        next.AttackPunishDamageTaken += target.Value.PunishingAttackAmount * action.PunishableAttackHits;
-                        if (dealtDamage < target.Value.CurrentHp + target.Value.Block)
+                        int overkillPenaltyPerPoint = Math.Max(core.LineDamageValuePerPoint, core.DirectDamageValuePerPoint / 2);
+                        next.SetupScore -= wastedDamage * overkillPenaltyPerPoint;
+                    }
+
+                    if (action.PunishableAttackHits > 0 && target.Source.PunishesAttacks)
+                    {
+                        next.AttackPunishDamageTaken += target.Source.PunishingAttackAmount * action.PunishableAttackHits;
+                        if (!target.IsDead)
                         {
                             next.SetupScore -= ThornsNonLethalLinePenalty;
                         }
                     }
 
-                    next._damageByTargetId[target.Key] = next._damageByTargetId.GetValueOrDefault(target.Key) + dealtDamage;
-
-                    if (!next._deadEnemyIds.Contains(target.Key))
+                    next._damageByTargetId[target.Id] = next._damageByTargetId.GetValueOrDefault(target.Id) + usefulDamage;
+                    if (killedEnemy && next._deadEnemyIds.Add(target.Id))
                     {
-                        int effectiveEnemyHp = target.Value.CurrentHp + target.Value.Block;
-                        if (next._damageByTargetId[target.Key] >= effectiveEnemyHp)
-                        {
-                            next._deadEnemyIds.Add(target.Key);
-                            next.DamagePreventedByKills += EstimateEnemyRemovalPrevention(target.Value, context.EnemiesById.Count);
-                        }
+                        next.DamagePreventedByWeak = Math.Max(0, next.DamagePreventedByWeak - target.WeakPreventionApplied);
+                        next.DamagePreventedByKills += EstimateEnemyRemovalPrevention(target.Source, context.EnemiesById.Count);
                     }
                 }
             }
@@ -1477,20 +1424,21 @@ internal sealed class CombatTurnLinePlanner
                 return false;
             }
 
-            foreach (KeyValuePair<string, DeterministicEnemyState> target in ResolveEnemyTargets(context, action, action.DamagesAllEnemies))
+            EnsureShadowEnemies(context);
+            foreach (ShadowEnemyState target in ResolveShadowEnemyTargets(context, action, action.DamagesAllEnemies))
             {
-                if (!target.Value.IsLagavulinMatriarchAsleep)
+                if (!target.Source.IsLagavulinMatriarchAsleep)
                 {
                     continue;
                 }
 
                 int dealtDamage = action.Damage + (StrengthGained + TemporaryStrengthGained) * action.StrengthScalingHits;
-                if (_vulnerableTargets.Contains(target.Key) || target.Value.HasVulnerable)
+                if (target.HasVulnerable)
                 {
                     dealtDamage += (int)Math.Ceiling(dealtDamage * 0.5m);
                 }
 
-                dealtDamage = CombatActionScorer.EstimateEffectiveDamageAgainstEnemy(target.Value, dealtDamage, action.DamageHits);
+                dealtDamage = CombatActionScorer.EstimateEffectiveDamageAgainstEnemy(target.Source, dealtDamage, action.DamageHits);
                 if (dealtDamage > 0)
                 {
                     return true;
@@ -1499,35 +1447,6 @@ internal sealed class CombatTurnLinePlanner
 
             return false;
         }
-
-	        private static IEnumerable<KeyValuePair<string, DeterministicEnemyState>> ResolveEnemyTargets(
-            DeterministicCombatContext context,
-            PlannableAction action,
-            bool allEnemies)
-        {
-            if (allEnemies)
-            {
-                foreach (KeyValuePair<string, DeterministicEnemyState> enemy in context.EnemiesById)
-                {
-                    yield return enemy;
-                }
-
-                yield break;
-            }
-
-            if (!string.IsNullOrEmpty(action.Action.TargetId) &&
-                context.EnemiesById.TryGetValue(action.Action.TargetId, out DeterministicEnemyState? target))
-            {
-                yield return new KeyValuePair<string, DeterministicEnemyState>(action.Action.TargetId, target);
-                yield break;
-            }
-
-            if (action.Damage > 0 && context.EnemiesById.Count == 1)
-            {
-                KeyValuePair<string, DeterministicEnemyState> onlyEnemy = context.EnemiesById.First();
-                yield return onlyEnemy;
-	            }
-	        }
 
 	        private static DeterministicPlayerState? ResolvePlayerTarget(DeterministicCombatContext context, AiLegalActionOption action)
 	        {
@@ -1548,6 +1467,86 @@ internal sealed class CombatTurnLinePlanner
 	                ? actorTarget
 	                : null;
 	        }
+
+        private bool HasLiveDamageTarget(DeterministicCombatContext context, PlannableAction action)
+        {
+            EnsureShadowEnemies(context);
+            return ResolveShadowEnemyTargets(context, action, action.DamagesAllEnemies).Any();
+        }
+
+        private void EnsureShadowEnemies(DeterministicCombatContext context)
+        {
+            foreach (KeyValuePair<string, DeterministicEnemyState> enemy in context.EnemiesById)
+            {
+                if (_enemyStates.ContainsKey(enemy.Key))
+                {
+                    continue;
+                }
+
+                ShadowEnemyState shadow = new(enemy.Key, enemy.Value);
+                _enemyStates[enemy.Key] = shadow;
+                if (shadow.IsDead)
+                {
+                    _deadEnemyIds.Add(enemy.Key);
+                }
+            }
+        }
+
+        private IEnumerable<ShadowEnemyState> ResolveShadowEnemyTargets(
+            DeterministicCombatContext context,
+            PlannableAction action,
+            bool allEnemies)
+        {
+            EnsureShadowEnemies(context);
+            if (allEnemies)
+            {
+                foreach (string enemyId in context.EnemiesById.Keys)
+                {
+                    if (_enemyStates.TryGetValue(enemyId, out ShadowEnemyState? enemy) &&
+                        !enemy.IsDead)
+                    {
+                        yield return enemy;
+                    }
+                }
+
+                yield break;
+            }
+
+            if (!string.IsNullOrEmpty(action.Action.TargetId) &&
+                _enemyStates.TryGetValue(action.Action.TargetId, out ShadowEnemyState? target) &&
+                !target.IsDead)
+            {
+                yield return target;
+                yield break;
+            }
+
+            if (action.Damage <= 0)
+            {
+                yield break;
+            }
+
+            ShadowEnemyState? onlyAliveEnemy = null;
+            foreach (string enemyId in context.EnemiesById.Keys)
+            {
+                if (!_enemyStates.TryGetValue(enemyId, out ShadowEnemyState? enemy) ||
+                    enemy.IsDead)
+                {
+                    continue;
+                }
+
+                if (onlyAliveEnemy != null)
+                {
+                    yield break;
+                }
+
+                onlyAliveEnemy = enemy;
+            }
+
+            if (onlyAliveEnemy != null)
+            {
+                yield return onlyAliveEnemy;
+            }
+        }
 
         private int CountAffordableUnconsumedActions(LineNode node, DeterministicCombatContext context, bool requireDamage = false, bool requireBlock = false)
         {
@@ -2002,5 +2001,99 @@ internal sealed class CombatTurnLinePlanner
         {
             return action.RequiredKnownDrawCount <= 0 || CardsDrawn >= action.RequiredKnownDrawCount;
         }
+    }
+
+    private sealed class ShadowEnemyState
+    {
+        public ShadowEnemyState(string id, DeterministicEnemyState source)
+        {
+            Id = id;
+            Source = source;
+            CurrentHp = Math.Max(0, source.CurrentHp);
+            Block = Math.Max(0, source.Block);
+            HasVulnerable = source.HasVulnerable;
+            HasWeak = source.HasWeak;
+        }
+
+        private ShadowEnemyState(ShadowEnemyState other)
+        {
+            Id = other.Id;
+            Source = other.Source;
+            CurrentHp = other.CurrentHp;
+            Block = other.Block;
+            HasVulnerable = other.HasVulnerable;
+            HasWeak = other.HasWeak;
+            WeakPreventionApplied = other.WeakPreventionApplied;
+        }
+
+        public string Id { get; }
+
+        public DeterministicEnemyState Source { get; }
+
+        public int CurrentHp { get; private set; }
+
+        public int Block { get; private set; }
+
+        public bool HasVulnerable { get; private set; }
+
+        public bool HasWeak { get; private set; }
+
+        public int WeakPreventionApplied { get; private set; }
+
+        public bool IsDead => CurrentHp <= 0;
+
+        public ShadowEnemyState Clone()
+        {
+            return new ShadowEnemyState(this);
+        }
+
+        public void ApplyVulnerable()
+        {
+            HasVulnerable = true;
+        }
+
+        public bool ApplyWeak(out int preventedDamage)
+        {
+            if (HasWeak || Source.IncomingDamage <= 0)
+            {
+                HasWeak = true;
+                preventedDamage = 0;
+                return false;
+            }
+
+            HasWeak = true;
+            preventedDamage = Math.Max(1, Source.IncomingDamage / 4);
+            WeakPreventionApplied += preventedDamage;
+            return true;
+        }
+
+        public int ApplyEffectiveDamage(int effectiveDamage, out bool killedEnemy)
+        {
+            killedEnemy = false;
+            if (IsDead)
+            {
+                return 0;
+            }
+
+            int before = EffectiveHp;
+            if (effectiveDamage <= 0)
+            {
+                return 0;
+            }
+
+            int remainingDamage = effectiveDamage;
+            int blockDamage = Math.Min(Block, remainingDamage);
+            Block -= blockDamage;
+            remainingDamage -= blockDamage;
+            if (remainingDamage > 0)
+            {
+                CurrentHp = Math.Max(0, CurrentHp - remainingDamage);
+            }
+
+            killedEnemy = CurrentHp <= 0;
+            return Math.Max(0, before - EffectiveHp);
+        }
+
+        private int EffectiveHp => Math.Max(0, CurrentHp) + Math.Max(0, Block);
     }
 }

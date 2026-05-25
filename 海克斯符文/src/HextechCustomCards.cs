@@ -1,7 +1,10 @@
 using MegaCrit.Sts2.Core.Commands;
+using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Cards;
+using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Extensions;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
+using MegaCrit.Sts2.Core.Hooks;
 using MegaCrit.Sts2.Core.HoverTips;
 using MegaCrit.Sts2.Core.Localization.DynamicVars;
 using MegaCrit.Sts2.Core.Models;
@@ -33,38 +36,73 @@ public sealed class ElicitCard : CardModel
 
 	protected override IEnumerable<DynamicVar> CanonicalVars =>
 	[
-		new CardsVar(0)
+		new RepeatVar(1)
 	];
 
 	public override IEnumerable<CardKeyword> CanonicalKeywords =>
 	[
-		CardKeyword.Innate,
-		CardKeyword.Retain,
-		CardKeyword.Exhaust
+		CardKeyword.Retain
 	];
 
 	public ElicitCard()
-		: base(0, CardType.Skill, CardRarity.Token, TargetType.Self, shouldShowInCardLibrary: true)
+		: base(1, CardType.Skill, CardRarity.Token, TargetType.Self, shouldShowInCardLibrary: true)
 	{
 	}
 
 	protected override async Task OnPlay(PlayerChoiceContext choiceContext, CardPlay cardPlay)
 	{
-		int orbCount = Owner.PlayerCombatState?.OrbQueue.Orbs.Count ?? 0;
-		for (int i = 0; i < orbCount; i++)
+		int repeatCount = Math.Max(1, DynamicVars.Repeat.IntValue);
+		for (int repeatIndex = 0; repeatIndex < repeatCount; repeatIndex++)
 		{
-			await OrbCmd.EvokeNext(choiceContext, Owner);
+			int orbCount = Owner.PlayerCombatState?.OrbQueue.Orbs.Count ?? 0;
+			if (orbCount <= 0)
+			{
+				break;
+			}
+
+			if (repeatIndex == repeatCount - 1)
+			{
+				for (int i = 0; i < orbCount; i++)
+				{
+					await OrbCmd.EvokeNext(choiceContext, Owner);
+				}
+				continue;
+			}
+
+			foreach (OrbModel orb in Owner.PlayerCombatState!.OrbQueue.Orbs.ToArray())
+			{
+				await EvokeWithoutRemoving(choiceContext, orb);
+			}
+		}
+	}
+
+	private async Task EvokeWithoutRemoving(PlayerChoiceContext choiceContext, OrbModel orb)
+	{
+		if (Owner?.Creature.CombatState == null
+			|| Owner.PlayerCombatState == null
+			|| CombatManager.Instance.IsOverOrEnding
+			|| !Owner.PlayerCombatState.OrbQueue.Orbs.Contains(orb))
+		{
+			return;
 		}
 
-		if (DynamicVars.Cards.IntValue > 0)
+		IEnumerable<Creature> targets;
+		choiceContext.PushModel(orb);
+		try
 		{
-			await CardPileCmd.Draw(choiceContext, DynamicVars.Cards.BaseValue, Owner, fromHandDraw: false);
+			targets = await orb.Evoke(choiceContext);
 		}
+		finally
+		{
+			choiceContext.PopModel(orb);
+		}
+
+		await Hook.AfterOrbEvoked(choiceContext, Owner.Creature.CombatState, orb, targets);
 	}
 
 	protected override void OnUpgrade()
 	{
-		DynamicVars.Cards.UpgradeValueBy(2m);
+		DynamicVars.Repeat.UpgradeValueBy(1m);
 	}
 }
 

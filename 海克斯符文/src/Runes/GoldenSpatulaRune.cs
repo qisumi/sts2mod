@@ -36,33 +36,30 @@ namespace HextechRunes;
 
 public sealed class GoldenSpatulaRune : HextechRelicBase, IHextechSharedCombatVictoryRune
 {
+	private int _stacks;
+
+	[SavedProperty(SerializationCondition.SaveIfNotTypeDefault)]
+	public int SavedStacks
+	{
+		get => _stacks;
+		set
+		{
+			_stacks = Math.Max(0, value);
+			InvokeDisplayAmountChanged();
+		}
+	}
+
+	public override bool ShowCounter => true;
+
+	public override int DisplayAmount => !IsCanonical ? _stacks : 0;
+
 	protected override IEnumerable<DynamicVar> CanonicalVars =>
 	[
-			new PowerVar<StrengthPower>(1m),
-			new PowerVar<DexterityPower>(1m),
-			new PowerVar<FocusPower>(1m),
-			new DynamicVar("ForgeRewardChance", 50m)
+			new DynamicVar("StackBonusPercent", 1m),
+			new DynamicVar("StackOverloadThreshold", 10m)
 		];
 
-	protected override IEnumerable<IHoverTip> ExtraHoverTips =>
-	[
-		HoverTipFactory.FromPower<StrengthPower>(),
-		HoverTipFactory.FromPower<DexterityPower>(),
-		HoverTipFactory.FromPower<FocusPower>()
-	];
-
-	public override async Task BeforeCombatStart()
-	{
-		if (Owner == null || Owner.Creature.IsDead)
-		{
-			return;
-		}
-
-		Flash();
-		await PowerCmd.Apply<StrengthPower>(Owner.Creature, DynamicVars.Strength.BaseValue, Owner.Creature, null);
-		await PowerCmd.Apply<DexterityPower>(Owner.Creature, DynamicVars.Dexterity.BaseValue, Owner.Creature, null);
-		await PowerCmd.Apply<FocusPower>(Owner.Creature, DynamicVars["FocusPower"].BaseValue, Owner.Creature, null);
-	}
+	public decimal SustainMultiplier => StackMultiplier;
 
 	public override Task AfterCombatVictory(CombatRoom room)
 	{
@@ -74,25 +71,52 @@ public sealed class GoldenSpatulaRune : HextechRelicBase, IHextechSharedCombatVi
 		return ApplySharedCombatVictory(room);
 	}
 
-	public Task ApplySharedCombatVictory(CombatRoom room)
+	public async Task ApplySharedCombatVictory(CombatRoom room)
 	{
-		if (Owner == null
-			|| Owner.Creature.IsDead
-			|| !HextechStableRandom.PercentChance(
-				(RunState)Owner.RunState,
-				DynamicVars["ForgeRewardChance"].IntValue,
-				"gacha-addict-forge-reward",
-				HextechStableRandom.PlayerKey(Owner),
-				Owner.Relics.Count.ToString()))
+		if (Owner == null || Owner.Creature.IsDead)
 		{
-			return Task.CompletedTask;
+			return;
 		}
 
-		if (HextechForgeGrantHelper.AddRandomForgeReward(Owner, room))
+		int previousStacks = _stacks;
+		SavedStacks = previousStacks + 1;
+		Flash(Array.Empty<Creature>());
+		decimal hpGainPercent = TotalBonusPercentFor(_stacks) - TotalBonusPercentFor(previousStacks);
+		int hpGain = Math.Max(1, FloorToInt(Owner.Creature.MaxHp * hpGainPercent / 100m));
+		await CreatureCmd.GainMaxHp(Owner.Creature, hpGain);
+	}
+
+	public override decimal ModifyDamageMultiplicative(Creature? target, decimal amount, ValueProp props, Creature? dealer, CardModel? cardSource)
+	{
+		return IsDamageFromOwner(dealer, cardSource) ? StackMultiplier : 1m;
+	}
+
+	public override decimal ModifyBlockMultiplicative(Creature target, decimal block, ValueProp props, CardModel? cardSource, CardPlay? cardPlay)
+	{
+		return target == Owner?.Creature ? StackMultiplier : 1m;
+	}
+
+	private decimal StackMultiplier
+	{
+		get
 		{
-			Flash(Array.Empty<Creature>());
+			if (_stacks <= 0)
+			{
+				return 1m;
+			}
+
+			return 1m + TotalBonusPercentFor(_stacks) / 100m;
+		}
+	}
+
+	private decimal TotalBonusPercentFor(int stacks)
+	{
+		if (stacks <= 0)
+		{
+			return 0m;
 		}
 
-		return Task.CompletedTask;
+		decimal multiplier = stacks > DynamicVars["StackOverloadThreshold"].IntValue ? 2m : 1m;
+		return stacks * DynamicVars["StackBonusPercent"].BaseValue * multiplier;
 	}
 }

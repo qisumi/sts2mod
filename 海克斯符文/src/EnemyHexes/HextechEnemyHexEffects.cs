@@ -21,6 +21,7 @@ internal static class HextechEnemyHexEffects
 		new StartupRoutineEnemyHex(),
 		new DizzySpinningEnemyHex(),
 		new BrutalForceEnemyHex(),
+		new ZealotEnemyHex(),
 		new SturdyEnemyHex(),
 		new DawnbringersResolveEnemyHex(),
 		new ShrinkRayEnemyHex(),
@@ -46,6 +47,7 @@ internal static class HextechEnemyHexEffects
 		new MirrorReflectionEnemyHex(),
 		new BlueCandleMedkitEnemyHex(),
 		new TanksShieldEnemyHex(),
+		new ScaredStiffEnemyHex(),
 		new CourageOfColossusEnemyHex(),
 		new GlassCannonEnemyHex(),
 		new GoliathEnemyHex(),
@@ -73,7 +75,11 @@ internal static class HextechEnemyHexEffects
 		new MiseryEnemyHex(),
 		new ShoulderVakuEnemyHex(),
 		new UpgradeEnemyHex(),
-		new NearDeathFeastEnemyHex()
+		new NearDeathFeastEnemyHex(),
+		new GhostFormEnemyHex(),
+		new SerpentsFangEnemyHex(),
+		new PandorasBoxEnemyHex(),
+		new ForbiddenGrimoireEnemyHex()
 	];
 
 	internal static IEnumerable<HextechEnemyHexEffect> GetActive(HextechMayhemModifier modifier)

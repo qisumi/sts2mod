@@ -24,7 +24,7 @@ public sealed class CorpseExplosionRune : HextechRelicBase
 		return IsSilentPlayer(player);
 	}
 
-	public override async Task AfterDamageReceived(PlayerChoiceContext choiceContext, Creature target, DamageResult result, ValueProp props, Creature? dealer, CardModel? cardSource)
+	public override async Task AfterDamageGiven(PlayerChoiceContext choiceContext, Creature? dealer, DamageResult result, ValueProp props, Creature target, CardModel? cardSource)
 	{
 		if (Owner == null
 			|| Owner.Creature.IsDead

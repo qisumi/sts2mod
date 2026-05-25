@@ -55,11 +55,8 @@ internal static class AiTeammateCombatTurnPatches
                         continue;
                     }
 
-                    if (CombatManager.Instance.IsPlayerReadyToEndTurn(aiPlayer))
-                    {
-                        Log.Info($"[AITeammate] Auto-marking AI ready to begin enemy turn. aiPlayer={participant.PlayerId}");
-                        CombatManager.Instance.SetReadyToBeginEnemyTurn(aiPlayer);
-                    }
+                    Log.Info($"[AITeammate] Auto-marking AI ready to begin enemy turn. aiPlayer={participant.PlayerId} wasReadyToEndTurn={CombatManager.Instance.IsPlayerReadyToEndTurn(aiPlayer)}");
+                    CombatManager.Instance.SetReadyToBeginEnemyTurn(aiPlayer);
                 }
             }
             finally

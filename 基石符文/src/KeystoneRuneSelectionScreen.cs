@@ -4,11 +4,11 @@ using MegaCrit.Sts2.addons.mega_text;
 using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Models;
-using MegaCrit.Sts2.Core.Nodes.Relics;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
 using MegaCrit.Sts2.Core.Nodes.HoverTips;
 using MegaCrit.Sts2.Core.Nodes.Screens.Overlays;
 using MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext;
+using MegaCrit.Sts2.Core.Logging;
 using Godot;
 using System;
 using System.Collections.Generic;
@@ -29,6 +29,8 @@ internal sealed class KeystoneRuneSelectionScreen : Control, IOverlayScreen, ISc
 
 	private readonly List<Control> _holders = new();
 
+	private readonly string? _titleOverride;
+
 	private NChoiceSelectionSkipButton? _skipButton;
 
 	public NetScreenType ScreenType => NetScreenType.Rewards;
@@ -37,9 +39,10 @@ internal sealed class KeystoneRuneSelectionScreen : Control, IOverlayScreen, ISc
 
 	public Control? DefaultFocusedControl => _holders.FirstOrDefault();
 
-	private KeystoneRuneSelectionScreen(IReadOnlyList<ModInfo.RuneSeriesGroup> groups)
+	private KeystoneRuneSelectionScreen(IReadOnlyList<ModInfo.RuneSeriesGroup> groups, string? titleOverride)
 	{
 		_groups = groups;
+		_titleOverride = titleOverride;
 		Name = nameof(KeystoneRuneSelectionScreen);
 		SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
 		MouseFilter = MouseFilterEnum.Stop;
@@ -48,9 +51,9 @@ internal sealed class KeystoneRuneSelectionScreen : Control, IOverlayScreen, ISc
 		BuildUi();
 	}
 
-	public static KeystoneRuneSelectionScreen Create(IReadOnlyList<RelicModel> relics)
+	public static KeystoneRuneSelectionScreen Create(IReadOnlyList<RelicModel> relics, string? titleOverride = null)
 	{
-		return new KeystoneRuneSelectionScreen(ModInfo.GetRuneSeriesGroups(relics));
+		return new KeystoneRuneSelectionScreen(ModInfo.GetRuneSeriesGroups(relics), titleOverride);
 	}
 
 	private void BuildUi()
@@ -76,7 +79,7 @@ internal sealed class KeystoneRuneSelectionScreen : Control, IOverlayScreen, ISc
 		};
 		ApplyDefaultMegaLabelTheme(title);
 		title.Modulate = Colors.White;
-		title.SetTextAutoSize(new LocString(LocTable, "KEYSTONE_SELECTION_TITLE").GetRawText());
+		title.SetTextAutoSize(_titleOverride ?? new LocString(LocTable, "KEYSTONE_SELECTION_TITLE").GetRawText());
 		root.AddChild(title);
 
 		HBoxContainer columns = new()
@@ -141,12 +144,8 @@ internal sealed class KeystoneRuneSelectionScreen : Control, IOverlayScreen, ISc
 				button.AddThemeStyleboxOverride("focus", empty);
 				buttonCenter.AddChild(button);
 
-				NRelic relicNode = NRelic.Create(relic, NRelic.IconSize.Small)
-					?? throw new InvalidOperationException("Failed to create relic node.");
-				relicNode.MouseFilter = MouseFilterEnum.Ignore;
-				relicNode.Scale = Vector2.One * 1.8f;
-				relicNode.Position = new Vector2(26f, 6f);
-				button.AddChild(relicNode);
+				TextureRect relicIcon = CreateKeystoneRelicIcon(relic);
+				button.AddChild(relicIcon);
 
 				MegaLabel relicLabel = new()
 				{
@@ -162,8 +161,8 @@ internal sealed class KeystoneRuneSelectionScreen : Control, IOverlayScreen, ISc
 				option.AddChild(relicLabel);
 
 				button.Pressed += () => OnHolderSelected(relic);
-				button.MouseEntered += () => ShowHoverTip(button, relicNode, relic);
-				button.MouseExited += () => HideHoverTip(button, relicNode);
+				button.MouseEntered += () => ShowHoverTip(button, relicIcon, relic);
+				button.MouseExited += () => HideHoverTip(button, relicIcon);
 				_holders.Add(button);
 			}
 		}
@@ -186,7 +185,7 @@ internal sealed class KeystoneRuneSelectionScreen : Control, IOverlayScreen, ISc
 		skipButton.Connect("Released", Callable.From(OnSkipPressed));
 		AddChild(skipButton);
 		_skipButton = skipButton;
-		CallDeferred(nameof(UpdateSkipButtonLayout));
+		QueueUpdateSkipButtonLayout();
 	}
 
 	private void OnHolderSelected(RelicModel relic)
@@ -199,18 +198,27 @@ internal sealed class KeystoneRuneSelectionScreen : Control, IOverlayScreen, ISc
 		_completionSource.TrySetResult(Array.Empty<RelicModel>());
 	}
 
-	public async Task<IEnumerable<RelicModel>> RelicsSelected()
+	public async Task<IEnumerable<RelicModel>> RelicsSelected(bool closeOnSelection = true)
 	{
 		IEnumerable<RelicModel> result = await _completionSource.Task;
-		NOverlayStack.Instance?.Remove(this);
+		if (closeOnSelection)
+		{
+			CloseSelectionScreen();
+		}
+
 		return result;
+	}
+
+	public void CloseSelectionScreen()
+	{
+		NOverlayStack.Instance?.Remove(this);
 	}
 
 	public void AfterOverlayOpened()
 	{
 		Modulate = Colors.White;
 		Visible = true;
-		CallDeferred(nameof(UpdateSkipButtonLayout));
+		QueueUpdateSkipButtonLayout();
 	}
 
 	public void AfterOverlayClosed()
@@ -221,12 +229,17 @@ internal sealed class KeystoneRuneSelectionScreen : Control, IOverlayScreen, ISc
 	public void AfterOverlayShown()
 	{
 		Visible = true;
-		CallDeferred(nameof(UpdateSkipButtonLayout));
+		QueueUpdateSkipButtonLayout();
 	}
 
 	public void AfterOverlayHidden()
 	{
 		Visible = false;
+	}
+
+	private void QueueUpdateSkipButtonLayout()
+	{
+		Callable.From(UpdateSkipButtonLayout).CallDeferred();
 	}
 
 	private void UpdateSkipButtonLayout()
@@ -246,16 +259,67 @@ internal sealed class KeystoneRuneSelectionScreen : Control, IOverlayScreen, ISc
 		_skipButton.GlobalPosition = GlobalPosition + new Vector2((viewportSize.X - size.X) * 0.5f, viewportSize.Y - size.Y - 56f);
 	}
 
-	private static void ShowHoverTip(Control owner, NRelic relicNode, RelicModel relic)
+	private static TextureRect CreateKeystoneRelicIcon(RelicModel relic)
 	{
-		relicNode.Icon.Scale = Vector2.One * 1.25f;
-		NHoverTipSet tipSet = NHoverTipSet.CreateAndShow(owner, relic.HoverTips, HoverTip.GetHoverTipAlignment(owner));
-		tipSet.SetAlignmentForRelic(relicNode);
+		TextureRect icon = new()
+		{
+			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+			StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+			CustomMinimumSize = new Vector2(84f, 84f),
+			Size = new Vector2(84f, 84f),
+			Position = new Vector2(18f, 6f),
+			PivotOffset = new Vector2(42f, 42f),
+			MouseFilter = MouseFilterEnum.Ignore
+		};
+		Texture2D? texture = TryLoadKeystoneRelicTexture(relic);
+		if (texture != null)
+		{
+			TryAssignIconTexture(icon, texture, relic);
+		}
+
+		return icon;
 	}
 
-	private static void HideHoverTip(Control owner, NRelic relicNode)
+	private static Texture2D? TryLoadKeystoneRelicTexture(RelicModel relic)
 	{
-		relicNode.Icon.Scale = Vector2.One;
+		try
+		{
+			return AssetHooks.LoadRelicTexture(relic);
+		}
+		catch (Exception ex) when (IsExpectedGodotLifecycleException(ex))
+		{
+			Log.Warn($"[{ModInfo.Id}] Failed to load selection icon for {relic.Id.Entry}: {ex.GetType().Name}");
+			return null;
+		}
+	}
+
+	private static void TryAssignIconTexture(TextureRect icon, Texture2D texture, RelicModel relic)
+	{
+		try
+		{
+			icon.Texture = texture;
+		}
+		catch (Exception ex) when (IsExpectedGodotLifecycleException(ex))
+		{
+			Log.Warn($"[{ModInfo.Id}] Failed to assign selection icon for {relic.Id.Entry}: {ex.GetType().Name}");
+		}
+	}
+
+	private static bool IsExpectedGodotLifecycleException(Exception ex)
+	{
+		return ex is InvalidOperationException or ObjectDisposedException or NullReferenceException;
+	}
+
+	private static void ShowHoverTip(Control owner, Control relicIcon, RelicModel relic)
+	{
+		relicIcon.Scale = Vector2.One * 1.15f;
+		NHoverTipSet? tipSet = NHoverTipSet.CreateAndShow(owner, relic.HoverTips, HoverTip.GetHoverTipAlignment(owner));
+		tipSet?.SetFollowOwner();
+	}
+
+	private static void HideHoverTip(Control owner, Control relicIcon)
+	{
+		relicIcon.Scale = Vector2.One;
 		NHoverTipSet.Remove(owner);
 	}
 

@@ -10,7 +10,7 @@ internal sealed class ThornmailEnemyHex : HextechEnemyHexEffect
 	{
 		if (HextechMayhemModifier.TryMarkPersistentHexApplied(context.Tracking.ThornmailApplied, creature, replayOneShotPowers))
 		{
-			await HextechEnemyPowerScalingHooks.Apply<ReflectPower>(creature, context.TierValue(Kind, 4, 5, 6), creature, null);
+			await HextechEnemyPowerScalingHooks.Apply<ThornsPower>(creature, context.TierValue(Kind, 0, 1, 2), creature, null);
 		}
 	}
 }

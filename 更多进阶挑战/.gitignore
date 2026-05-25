@@ -1,0 +1,4 @@
+.DS_Store
+dist/
+src/bin/
+src/obj/

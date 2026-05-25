@@ -27,6 +27,17 @@ internal sealed partial class HextechMayhemModifier
 		return modified;
 	}
 
+	public override CardCreationOptions ModifyCardRewardCreationOptions(Player player, CardCreationOptions options)
+	{
+		HextechEnemyHexContext context = new(this);
+		foreach (HextechEnemyHexEffect effect in HextechEnemyHexEffects.GetActive(this))
+		{
+			options = effect.ModifyCardRewardCreationOptions(context, player, options);
+		}
+
+		return options;
+	}
+
 	public override bool TryModifyCardRewardOptions(Player player, List<CardCreationResult> cardRewardOptions, CardCreationOptions creationOptions)
 	{
 		HextechEnemyHexContext context = new(this);

@@ -26,7 +26,31 @@ internal sealed partial class HextechMayhemModifier
 		int missingMaxHp = expectedMaxHp - creature.MaxHp;
 		if (missingMaxHp > 0)
 		{
-			await CreatureCmd.GainMaxHp(creature, missingMaxHp);
+			await GainMonsterMaxHpWithoutHeal(creature, missingMaxHp);
+		}
+	}
+
+	internal static async Task GainMonsterMaxHpWithoutHeal(Creature creature, int amount)
+	{
+		if (amount <= 0)
+		{
+			return;
+		}
+
+		int oldMaxHp = creature.MaxHp;
+		int oldCurrentHp = creature.CurrentHp;
+		await CreatureCmdCompat.SetMaxHp(creature, oldMaxHp + amount);
+
+		int actualMaxHpGain = Math.Max(0, creature.MaxHp - oldMaxHp);
+		if (actualMaxHpGain <= 0)
+		{
+			return;
+		}
+
+		int newCurrentHp = Math.Min(creature.MaxHp, oldCurrentHp + actualMaxHpGain);
+		if (newCurrentHp != creature.CurrentHp)
+		{
+			await CreatureCmd.SetCurrentHp(creature, newCurrentHp);
 		}
 	}
 

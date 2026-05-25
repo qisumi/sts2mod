@@ -1,11 +1,12 @@
 using System.Reflection;
-using System.Runtime.Loader;
 using Godot;
+using HarmonyLib;
 using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Extensions;
 using MegaCrit.Sts2.Core.GameActions;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
+using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Models;
@@ -17,85 +18,138 @@ using MegaCrit.Sts2.Core.Nodes.Screens.Overlays;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Saves;
 using MegaCrit.Sts2.Core.Saves.Runs;
-using MonoMod.RuntimeDetour;
 
 namespace KeystoneRunes;
 
 [ModInitializer(nameof(Initialize))]
 public static class ModEntry
 {
+	private const string HarmonyId = "Natsuki.KeystoneRunes";
+
 	private readonly record struct PendingRuneSelection(Player Player, List<RelicModel> Options, uint ChoiceId, bool IsLocal);
 
-	private static Hook? _finalizeStartingRelicsHook;
-
-	private static Hook? _startRunHook;
-
-	private delegate Task OrigFinalizeStartingRelics(RunManager self);
-
-	private delegate Task OrigStartRun(NGame self, RunState runState);
+	private static Harmony? _harmony;
 
 	public static void Initialize()
 	{
-		PreloadDependencyAssemblies();
 		InjectSavedPropertyCaches();
 		RegisterModels();
-		InstallHooks();
-		AssetHooks.Install();
-		CollectionHooks.Install();
+		Harmony harmony = _harmony ??= new Harmony(HarmonyId);
+		InstallHooks(harmony);
+		TryInstallOptionalHookGroup("asset hooks", () => AssetHooks.Install(harmony));
+		TryInstallOptionalHookGroup("collection hooks", () => CollectionHooks.Install(harmony));
 		Log.Info($"[{ModInfo.Id}] Loaded for Slay the Spire 2 {ModInfo.TargetGameVersion}.");
+	}
+
+	private static void TryInstallOptionalHookGroup(string label, Action install)
+	{
+		try
+		{
+			install();
+		}
+		catch (Exception ex)
+		{
+			Log.Warn($"[{ModInfo.Id}] Optional hook group skipped: {label}: {ex.GetType().Name}: {ex.Message}");
+		}
 	}
 
 	private static void InjectSavedPropertyCaches()
 	{
-		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(ElectrocuteRune));
-		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(FirstStrikeRune));
-		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(UndyingGraspRune));
-		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(ConquerorRune));
-		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(SummonAeryRune));
-		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(PressTheAttackRune));
-		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(PhaseRushRune));
-		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(UnsealedSpellbookRune));
-		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(HailOfBladesRune));
-		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(FleetFootworkRune));
-		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(ArcaneCometRune));
-		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(DarkHarvestRune));
-		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(GlacialAugmentRune));
-		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(AftershockRune));
-		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(GuardianRune));
+		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(Keystone_ElectrocuteRune));
+		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(Keystone_FirstStrikeRune));
+		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(Keystone_UndyingGraspRune));
+		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(Keystone_ConquerorRune));
+		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(Keystone_SummonAeryRune));
+		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(Keystone_LethalTempoRune));
+		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(Keystone_PhaseRushRune));
+		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(Keystone_UnsealedSpellbookRune));
+		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(Keystone_HailOfBladesRune));
+		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(Keystone_FleetFootworkRune));
+		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(Keystone_ArcaneCometRune));
+		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(Keystone_DarkHarvestRune));
+		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(Keystone_GlacialAugmentRune));
+		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(Keystone_AftershockRune));
+		SavedPropertiesTypeCache.InjectTypeIntoCache(typeof(Keystone_GuardianRune));
+		EnsureSavedPropertyNetIdBitSize();
+	}
+
+	private static void EnsureSavedPropertyNetIdBitSize()
+	{
+		const int minimumBitSize = 16;
+		const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Static;
+
+		FieldInfo? mapField = typeof(SavedPropertiesTypeCache).GetField("_netIdToPropertyNameMap", flags);
+		int propertyNameCount = (mapField?.GetValue(null) as System.Collections.ICollection)?.Count ?? 0;
+		int requiredBitSize = GetRequiredBitSize(propertyNameCount);
+		int targetBitSize = Math.Max(minimumBitSize, requiredBitSize);
+		int currentBitSize = SavedPropertiesTypeCache.NetIdBitSize;
+		if (currentBitSize >= targetBitSize)
+		{
+			Log.Info($"[{ModInfo.Id}] SavedPropertiesTypeCache NetIdBitSize unchanged: bitSize={currentBitSize} propertyNames={propertyNameCount}");
+			return;
+		}
+
+		FieldInfo? backingField = typeof(SavedPropertiesTypeCache).GetField("<NetIdBitSize>k__BackingField", flags);
+		if (backingField == null)
+		{
+			Log.Warn($"[{ModInfo.Id}] SavedPropertiesTypeCache NetIdBitSize backing field not found; custom saved properties may desync in multiplayer.");
+			return;
+		}
+
+		backingField.SetValue(null, targetBitSize);
+		Log.Info($"[{ModInfo.Id}] SavedPropertiesTypeCache NetIdBitSize updated: old={currentBitSize} new={targetBitSize} propertyNames={propertyNameCount}");
+	}
+
+	private static int GetRequiredBitSize(int valueCount)
+	{
+		int maxValue = Math.Max(1, valueCount - 1);
+		int bits = 0;
+		while (maxValue > 0)
+		{
+			bits++;
+			maxValue >>= 1;
+		}
+
+		return bits;
 	}
 
 	private static void RegisterModels()
 	{
-		ModHelper.AddModelToPool<SharedRelicPool, ElectrocuteRune>();
-		ModHelper.AddModelToPool<SharedRelicPool, FirstStrikeRune>();
-		ModHelper.AddModelToPool<SharedRelicPool, UndyingGraspRune>();
-		ModHelper.AddModelToPool<SharedRelicPool, ConquerorRune>();
-		ModHelper.AddModelToPool<SharedRelicPool, SummonAeryRune>();
-		ModHelper.AddModelToPool<SharedRelicPool, PressTheAttackRune>();
-		ModHelper.AddModelToPool<SharedRelicPool, PhaseRushRune>();
-		ModHelper.AddModelToPool<SharedRelicPool, UnsealedSpellbookRune>();
-		ModHelper.AddModelToPool<SharedRelicPool, HailOfBladesRune>();
-		ModHelper.AddModelToPool<SharedRelicPool, FleetFootworkRune>();
-		ModHelper.AddModelToPool<SharedRelicPool, ArcaneCometRune>();
-		ModHelper.AddModelToPool<SharedRelicPool, DarkHarvestRune>();
-		ModHelper.AddModelToPool<SharedRelicPool, GlacialAugmentRune>();
-		ModHelper.AddModelToPool<SharedRelicPool, AftershockRune>();
-		ModHelper.AddModelToPool<SharedRelicPool, GuardianRune>();
+		ModHelper.AddModelToPool<SharedRelicPool, Keystone_ElectrocuteRune>();
+		ModHelper.AddModelToPool<SharedRelicPool, Keystone_FirstStrikeRune>();
+		ModHelper.AddModelToPool<SharedRelicPool, Keystone_UndyingGraspRune>();
+		ModHelper.AddModelToPool<SharedRelicPool, Keystone_ConquerorRune>();
+		ModHelper.AddModelToPool<SharedRelicPool, Keystone_SummonAeryRune>();
+		ModHelper.AddModelToPool<SharedRelicPool, Keystone_LethalTempoRune>();
+		ModHelper.AddModelToPool<SharedRelicPool, Keystone_PhaseRushRune>();
+		ModHelper.AddModelToPool<SharedRelicPool, Keystone_UnsealedSpellbookRune>();
+		ModHelper.AddModelToPool<SharedRelicPool, Keystone_HailOfBladesRune>();
+		ModHelper.AddModelToPool<SharedRelicPool, Keystone_FleetFootworkRune>();
+		ModHelper.AddModelToPool<SharedRelicPool, Keystone_ArcaneCometRune>();
+		ModHelper.AddModelToPool<SharedRelicPool, Keystone_DarkHarvestRune>();
+		ModHelper.AddModelToPool<SharedRelicPool, Keystone_GlacialAugmentRune>();
+		ModHelper.AddModelToPool<SharedRelicPool, Keystone_AftershockRune>();
+		ModHelper.AddModelToPool<SharedRelicPool, Keystone_GuardianRune>();
 	}
 
-	private static void InstallHooks()
+	private static void InstallHooks(Harmony harmony)
 	{
-		_finalizeStartingRelicsHook = new Hook(
+		harmony.Patch(
 			RequireMethod(typeof(RunManager), nameof(RunManager.FinalizeStartingRelics), BindingFlags.Instance | BindingFlags.Public),
-			FinalizeStartingRelicsDetour);
-		_startRunHook = new Hook(
+			postfix: new HarmonyMethod(typeof(ModEntry), nameof(FinalizeStartingRelicsPostfix)));
+		harmony.Patch(
 			RequireMethod(typeof(NGame), "StartRun", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, typeof(RunState)),
-			StartRunDetour);
+			postfix: new HarmonyMethod(typeof(ModEntry), nameof(StartRunPostfix)));
 	}
 
-	private static async Task FinalizeStartingRelicsDetour(OrigFinalizeStartingRelics orig, RunManager self)
+	private static void FinalizeStartingRelicsPostfix(RunManager __instance, ref Task __result)
 	{
-		await orig(self);
+		__result = FinalizeStartingRelicsAfterOriginal(__result, __instance);
+	}
+
+	private static async Task FinalizeStartingRelicsAfterOriginal(Task original, RunManager self)
+	{
+		await original;
 
 		RunState? runState = self.DebugOnlyGetState();
 		if (runState == null)
@@ -109,9 +163,14 @@ public static class ModEntry
 		}
 	}
 
-	private static async Task StartRunDetour(OrigStartRun orig, NGame self, RunState runState)
+	private static void StartRunPostfix(RunState runState, ref Task __result)
 	{
-		await orig(self, runState);
+		__result = StartRunAfterOriginal(__result, runState);
+	}
+
+	private static async Task StartRunAfterOriginal(Task original, RunState runState)
+	{
+		await original;
 
 		NetGameType gameType = RunManager.Instance.NetService.Type;
 		if (gameType is NetGameType.Singleplayer or NetGameType.None)
@@ -130,10 +189,21 @@ public static class ModEntry
 	private static async Task EnsureKeystoneRunesSelectedMultiplayer(IReadOnlyList<Player> players)
 	{
 		RunManager runManager = RunManager.Instance;
+		RunState? runState = runManager.DebugOnlyGetState();
+		if (KeystoneAiTeammateCompat.IsAiTeammateLoopbackRun(runState))
+		{
+			await EnsureKeystoneRunesSelectedAiTeammateHostControlled(players);
+			return;
+		}
+
+		IReadOnlyList<Player> orderedPlayers = players
+			.OrderBy(static player => player.NetId)
+			.ToList();
+
 		PlayerChoiceSynchronizer? synchronizer = await WaitForPlayerChoiceSynchronizerAsync(runManager);
 		if (synchronizer == null)
 		{
-			foreach (Player player in players)
+			foreach (Player player in orderedPlayers)
 			{
 				await EnsureKeystoneRuneSelected(player);
 			}
@@ -142,7 +212,7 @@ public static class ModEntry
 		}
 
 		List<PendingRuneSelection> pendingSelections = new();
-		foreach (Player player in players)
+		foreach (Player player in orderedPlayers)
 		{
 			RemoveRunesFromGrabBags(player);
 			if (player.Relics.Any(ModInfo.IsKeystoneRelic))
@@ -162,17 +232,66 @@ public static class ModEntry
 			pendingSelections.Add(new PendingRuneSelection(player, options, choiceId, IsLocalPlayer(runManager, player)));
 		}
 
-		Task<RelicModel?>[] selectionTasks = pendingSelections
-			.Select(selection => SelectRuneMultiplayer(selection, synchronizer))
-			.ToArray();
-
-		RelicModel?[] selectedRelics = await Task.WhenAll(selectionTasks);
-		for (int i = 0; i < pendingSelections.Count; i++)
+		List<KeystoneRuneSelectionScreen> localScreens = new();
+		try
 		{
-			PendingRuneSelection selection = pendingSelections[i];
-			RelicModel selectedRelic = selectedRelics[i] ?? selection.Options[0];
-			await RelicCmd.Obtain(selectedRelic, selection.Player);
+			Task<RelicModel?>[] selectionTasks = pendingSelections
+				.Select(selection => SelectRuneMultiplayer(selection, synchronizer, localScreens))
+				.ToArray();
+
+			RelicModel?[] selectedRelics = await Task.WhenAll(selectionTasks);
+			for (int i = 0; i < pendingSelections.Count; i++)
+			{
+				PendingRuneSelection selection = pendingSelections[i];
+				RelicModel selectedRelic = selectedRelics[i] ?? selection.Options[0];
+				await RelicCmd.Obtain(selectedRelic, selection.Player);
+			}
 		}
+		finally
+		{
+			foreach (KeystoneRuneSelectionScreen screen in localScreens)
+			{
+				screen.CloseSelectionScreen();
+			}
+		}
+	}
+
+	private static async Task EnsureKeystoneRunesSelectedAiTeammateHostControlled(IReadOnlyList<Player> players)
+	{
+		Log.Info($"[{ModInfo.Id}][AITeammateCompat] Host-controlled keystone selection started.");
+		KeystoneAiTeammateCompat.TryGetHostPlayerId(out ulong hostPlayerId);
+		IReadOnlyList<Player> orderedPlayers = players
+			.OrderBy(player => hostPlayerId != 0UL
+				? (player.NetId == hostPlayerId ? 0 : 1)
+				: (KeystoneAiTeammateCompat.IsAiPlayer(player) ? 1 : 0))
+			.ThenBy(static player => player.NetId)
+			.ToList();
+
+		foreach (Player player in orderedPlayers)
+		{
+			RemoveRunesFromGrabBags(player);
+			if (player.Relics.Any(ModInfo.IsKeystoneRelic))
+			{
+				continue;
+			}
+
+			List<RelicModel> options = ModInfo.GetCanonicalRunes()
+				.Select(static relic => relic.ToMutable())
+				.ToList();
+			foreach (RelicModel relic in options)
+			{
+				SaveManager.Instance.MarkRelicAsSeen(relic);
+			}
+
+			bool isAiPlayer = KeystoneAiTeammateCompat.IsAiPlayer(player);
+			string? titleOverride = isAiPlayer ? FormatAiTeammateSelectionTitle(player) : null;
+			RelicModel? selected = await SelectRuneWithLocalScreen(options, titleOverride);
+			selected ??= options[0];
+			await RelicCmd.Obtain(selected, player);
+			Log.Info($"[{ModInfo.Id}][AITeammateCompat] Host-controlled obtained: player={player.NetId} ai={isAiPlayer} relic={(selected.CanonicalInstance?.Id ?? selected.Id).Entry}");
+		}
+
+		Log.Info($"[{ModInfo.Id}][AITeammateCompat] Host-controlled keystone selection complete.");
 	}
 
 	private static async Task EnsureKeystoneRuneSelected(Player player)
@@ -204,8 +323,7 @@ public static class ModEntry
 		NetGameType gameType = runManager.NetService.Type;
 		if (gameType is NetGameType.Singleplayer or NetGameType.None)
 		{
-			KeystoneRuneSelectionScreen screen = await CreateRuneSelectionScreenAsync(options);
-			return (await screen.RelicsSelected()).FirstOrDefault();
+			return await SelectRuneWithLocalScreen(options);
 		}
 
 		PlayerChoiceSynchronizer? synchronizer = await WaitForPlayerChoiceSynchronizerAsync(runManager);
@@ -217,11 +335,17 @@ public static class ModEntry
 		uint choiceId = synchronizer.ReserveChoiceId(player);
 		if (IsLocalPlayer(runManager, player))
 		{
-			KeystoneRuneSelectionScreen screen = await CreateRuneSelectionScreenAsync(options);
-			RelicModel? selectedRelic = (await screen.RelicsSelected()).FirstOrDefault();
+			RelicModel? selectedRelic = await SelectRuneWithLocalScreen(options);
 			int selectedIndex = selectedRelic == null ? -1 : options.IndexOf(selectedRelic);
 			synchronizer.SyncLocalChoice(player, choiceId, PlayerChoiceResult.FromIndex(selectedIndex));
 			return selectedRelic;
+		}
+
+		if (KeystoneAiTeammateCompat.ShouldAutoSelectRune(player))
+		{
+			Log.Info($"[{ModInfo.Id}][AITeammateCompat] Keystone choice AI auto-select: player={player.NetId} choiceId={choiceId}");
+			int selectedIndex = KeystoneAiTeammateCompat.PickRandomRuneIndex(player, options);
+			return selectedIndex >= 0 && selectedIndex < options.Count ? options[selectedIndex] : null;
 		}
 
 		PlayerChoiceResult remoteChoice = await synchronizer.WaitForRemoteChoice(player, choiceId);
@@ -229,20 +353,37 @@ public static class ModEntry
 		return index >= 0 && index < options.Count ? options[index] : null;
 	}
 
-	private static async Task<RelicModel?> SelectRuneMultiplayer(PendingRuneSelection selection, PlayerChoiceSynchronizer synchronizer)
+	private static async Task<RelicModel?> SelectRuneMultiplayer(
+		PendingRuneSelection selection,
+		PlayerChoiceSynchronizer synchronizer,
+		ICollection<KeystoneRuneSelectionScreen> localScreens)
 	{
 		if (selection.IsLocal)
 		{
 			KeystoneRuneSelectionScreen screen = await CreateRuneSelectionScreenAsync(selection.Options);
-			RelicModel? selectedRelic = (await screen.RelicsSelected()).FirstOrDefault();
+			localScreens.Add(screen);
+			RelicModel? selectedRelic = (await screen.RelicsSelected(closeOnSelection: false)).FirstOrDefault();
 			int selectedIndex = selectedRelic == null ? -1 : selection.Options.IndexOf(selectedRelic);
 			synchronizer.SyncLocalChoice(selection.Player, selection.ChoiceId, PlayerChoiceResult.FromIndex(selectedIndex));
 			return selectedRelic;
 		}
 
+		if (KeystoneAiTeammateCompat.ShouldAutoSelectRune(selection.Player))
+		{
+			Log.Info($"[{ModInfo.Id}][AITeammateCompat] Keystone choice AI auto-select: player={selection.Player.NetId} choiceId={selection.ChoiceId}");
+			int selectedIndex = KeystoneAiTeammateCompat.PickRandomRuneIndex(selection.Player, selection.Options);
+			return selectedIndex >= 0 && selectedIndex < selection.Options.Count ? selection.Options[selectedIndex] : null;
+		}
+
 		PlayerChoiceResult remoteChoice = await synchronizer.WaitForRemoteChoice(selection.Player, selection.ChoiceId);
 		int index = remoteChoice.AsIndex();
 		return index >= 0 && index < selection.Options.Count ? selection.Options[index] : null;
+	}
+
+	private static async Task<RelicModel?> SelectRuneWithLocalScreen(IReadOnlyList<RelicModel> options, string? titleOverride = null)
+	{
+		KeystoneRuneSelectionScreen screen = await CreateRuneSelectionScreenAsync(options, titleOverride);
+		return (await screen.RelicsSelected()).FirstOrDefault();
 	}
 
 	private static async Task<PlayerChoiceSynchronizer?> WaitForPlayerChoiceSynchronizerAsync(RunManager runManager)
@@ -265,7 +406,7 @@ public static class ModEntry
 		return player.NetId != 0UL && player.NetId == runManager.NetService.NetId;
 	}
 
-	private static async Task<KeystoneRuneSelectionScreen> CreateRuneSelectionScreenAsync(IReadOnlyList<RelicModel> relics)
+	private static async Task<KeystoneRuneSelectionScreen> CreateRuneSelectionScreenAsync(IReadOnlyList<RelicModel> relics, string? titleOverride = null)
 	{
 		for (int i = 0; i < 60; i++)
 		{
@@ -277,7 +418,7 @@ public static class ModEntry
 			await Task.Yield();
 		}
 
-		KeystoneRuneSelectionScreen selectionScreen = KeystoneRuneSelectionScreen.Create(relics);
+		KeystoneRuneSelectionScreen selectionScreen = KeystoneRuneSelectionScreen.Create(relics, titleOverride);
 
 		if (NOverlayStack.Instance == null)
 		{
@@ -288,34 +429,23 @@ public static class ModEntry
 		return selectionScreen;
 	}
 
+	private static string FormatAiTeammateSelectionTitle(Player player)
+	{
+		string template = new LocString("relic_collection", "KEYSTONE_SELECTION_TITLE_FOR_PLAYER").GetRawText();
+		if (string.IsNullOrWhiteSpace(template) || template == "KEYSTONE_SELECTION_TITLE_FOR_PLAYER")
+		{
+			template = "为{PlayerName}选择一枚基石符文";
+		}
+
+		return template.Replace("{PlayerName}", KeystoneAiTeammateCompat.GetDisplayName(player), StringComparison.Ordinal);
+	}
+
 	private static void RemoveRunesFromGrabBags(Player player)
 	{
 		foreach (RelicModel relic in ModInfo.GetCanonicalRunes())
 		{
 			player.RelicGrabBag.Remove(relic);
 			player.RunState.SharedRelicGrabBag.Remove(relic);
-		}
-	}
-
-	private static void PreloadDependencyAssemblies()
-	{
-		Assembly assembly = Assembly.GetExecutingAssembly();
-		string? modDirectory = Path.GetDirectoryName(assembly.Location);
-		if (string.IsNullOrEmpty(modDirectory) || !Directory.Exists(modDirectory))
-		{
-			return;
-		}
-
-		string selfPath = assembly.Location;
-		AssemblyLoadContext loadContext = AssemblyLoadContext.GetLoadContext(assembly) ?? AssemblyLoadContext.Default;
-		foreach (string dllPath in Directory.GetFiles(modDirectory, "*.dll"))
-		{
-			if (string.Equals(dllPath, selfPath, StringComparison.OrdinalIgnoreCase))
-			{
-				continue;
-			}
-
-			loadContext.LoadFromAssemblyPath(dllPath);
 		}
 	}
 

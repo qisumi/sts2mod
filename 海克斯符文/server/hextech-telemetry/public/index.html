@@ -78,7 +78,8 @@
       font-size: 14px;
       font-weight: 650;
     }
-    .controls select {
+    .controls select,
+    .controls button {
       min-width: 180px;
       border: 1px solid #c8d0cc;
       border-radius: 6px;
@@ -87,6 +88,15 @@
       color: inherit;
       font: inherit;
       font-size: 14px;
+    }
+    .controls button {
+      min-width: 96px;
+      cursor: pointer;
+      font-weight: 650;
+    }
+    .controls button:disabled {
+      cursor: wait;
+      opacity: 0.7;
     }
     .grid {
       display: grid;
@@ -136,7 +146,7 @@
       .muted, .empty {
         color: #9aa8a5;
       }
-      .stat, table, .links a, .empty, .controls select {
+      .stat, table, .links a, .empty, .controls select, .controls button {
         background: #182023;
         border-color: #2b3637;
       }
@@ -152,12 +162,13 @@
 <body>
   <main>
     <h1>海克斯符文统计</h1>
-    <div class="muted" id="updated">正在读取数据...</div>
+    <div class="muted" id="updated" data-generated-at-utc="">正在读取数据...</div>
     <div class="controls">
       <label for="versionFilter">统计版本</label>
       <select id="versionFilter">
         <option value="all">全部版本</option>
       </select>
+      <button id="applyVersion" type="button">应用选择</button>
     </div>
     <div class="stats">
       <div class="stat"><b id="eligibleRuns">0</b>纳入胜率的局数</div>
@@ -206,13 +217,13 @@
   <script>
     const API_BASE = window.location.protocol === "file:" ? "http://39.96.216.77" : "";
     const fmtPct = (value) => `${Number(value || 0).toFixed(1)}%`;
-    const top = (rows, limit = 80) => Array.isArray(rows) ? rows.slice(0, limit) : [];
-    const displayLabel = (row) => row && row.name && row.name !== row.id ? `${row.name} (${row.id})` : (row?.id || "");
+    const limitRows = (rows, limit = 80) => Array.isArray(rows) ? rows.slice(0, limit) : [];
+    const displayLabel = (row) => row && row.name && row.name !== row.id ? `${row.name} (${row.id})` : ((row && row.id) || "");
     let renderRequestId = 0;
     let versionFilterTouched = false;
 
     function text(value) {
-      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+      return String(value == null ? "" : value).replace(/[&<>"']/g, (ch) => ({
         "&": "&amp;",
         "<": "&lt;",
         ">": "&gt;",
@@ -265,9 +276,49 @@
     }
 
     function buildFilterNote(summary) {
-      const version = summary.versionFilter || summary.filters?.version || "all";
+      const version = summary.versionFilter || (summary.filters && summary.filters.version) || "all";
       const versionText = version === "all" ? "全部版本" : `版本 ${version}`;
       return `当前统计口径：${versionText}，排除 runTime < ${summary.filters.minRunTimeForDefaultStats} 秒的历史局；0.5.0 起客户端会直接跳过短局上传。`;
+    }
+
+    function formatLocalDateTime(value) {
+      if (!value) {
+        return "等待生成统计数据";
+      }
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return value;
+      }
+      const pad = (number) => String(number).padStart(2, "0");
+      let timeZoneName = "";
+      try {
+        const formatter = new Intl.DateTimeFormat(undefined, { timeZoneName: "short" });
+        if (typeof formatter.formatToParts === "function") {
+          const part = formatter.formatToParts(date).find((item) => item.type === "timeZoneName");
+          timeZoneName = part ? part.value : "";
+        }
+      } catch (error) {
+        timeZoneName = "";
+      }
+      if (!timeZoneName) {
+        const offsetMinutes = -date.getTimezoneOffset();
+        const sign = offsetMinutes >= 0 ? "+" : "-";
+        const absMinutes = Math.abs(offsetMinutes);
+        timeZoneName = `GMT${sign}${pad(Math.floor(absMinutes / 60))}:${pad(absMinutes % 60)}`;
+      }
+      return [
+        `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+        `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`,
+        timeZoneName || ""
+      ].filter(Boolean).join(" ");
+    }
+
+    function renderUpdatedAt(value) {
+      const updated = document.getElementById("updated");
+      updated.dataset.generatedAtUtc = value || "";
+      updated.textContent = value
+        ? `更新时间：${formatLocalDateTime(value)}`
+        : "等待生成统计数据";
     }
 
     async function fetchJson(url) {
@@ -312,7 +363,7 @@
     }
 
     function renderSummary(summary) {
-      document.getElementById("updated").textContent = `更新时间：${summary.generatedAtUtc}`;
+      renderUpdatedAt(summary.generatedAtUtc);
       document.getElementById("eligibleRuns").textContent = summary.runCount;
       document.getElementById("rawRuns").textContent = summary.raw.uniqueRuns;
       document.getElementById("shortRuns").textContent = summary.excludedShortRuns;
@@ -323,22 +374,22 @@
       renderTable(
         document.getElementById("versions"),
         ["版本", "局数"],
-        top(summary.tables.versions, 20).map((row) => [displayLabel(row), row.count])
+        limitRows(summary.tables.versions, 20).map((row) => [displayLabel(row), row.count])
       );
       renderTable(
         document.getElementById("netModes"),
         ["模式", "局数"],
-        top(summary.tables.netModes, 20).map((row) => [displayLabel(row), row.count])
+        limitRows(summary.tables.netModes, 20).map((row) => [displayLabel(row), row.count])
       );
       renderTable(
         document.getElementById("characters"),
         ["角色", "玩家样本"],
-        top(summary.tables.characters, 20).map((row) => [displayLabel(row), row.count])
+        limitRows(summary.tables.characters, 20).map((row) => [displayLabel(row), row.count])
       );
       renderTable(
         document.getElementById("choices"),
         ["海克斯", "出现", "选择", "选择率", "选择后胜率"],
-        top(summary.tables.playerRuneChoices).map((row) => [
+        limitRows(summary.tables.playerRuneChoices).map((row) => [
           displayLabel(row),
           row.offered,
           row.selected,
@@ -349,12 +400,12 @@
       renderTable(
         document.getElementById("playerRunes"),
         ["海克斯", "持有局数", "胜利", "玩家胜率"],
-        top(summary.tables.playerRuneRuns).map((row) => [displayLabel(row), row.runs, row.wins, fmtPct(row.winRate)])
+        limitRows(summary.tables.playerRuneRuns).map((row) => [displayLabel(row), row.runs, row.wins, fmtPct(row.winRate)])
       );
       renderTable(
         document.getElementById("monsterHexes"),
         ["敌方海克斯", "出现局数", "敌方胜利", "敌方胜率", "玩家胜率"],
-        top(summary.tables.monsterHexRuns).map((row) => [
+        limitRows(summary.tables.monsterHexRuns).map((row) => [
           displayLabel(row),
           row.runs,
           row.monsterWins,
@@ -366,10 +417,12 @@
 
     async function loadAndRender(version) {
       const requestId = ++renderRequestId;
-      document.getElementById("updated").textContent = "正在读取数据...";
+      setLoadingStatus();
+      setApplyButtonBusy(true);
       const summary = await fetchJson(summaryUrl(version));
       if (requestId === renderRequestId) {
         renderSummary(summary);
+        setApplyButtonBusy(false);
       }
       return summary;
     }
@@ -378,13 +431,16 @@
       const requestId = ++renderRequestId;
       setQueryVersion(version);
       try {
-        document.getElementById("updated").textContent = "正在读取数据...";
+        setLoadingStatus();
+        setApplyButtonBusy(true);
         const summary = cachedSummary || await fetchJson(summaryUrl(version));
         if (requestId === renderRequestId) {
           renderSummary(summary);
+          setApplyButtonBusy(false);
         }
       } catch (error) {
         if (requestId === renderRequestId) {
+          setApplyButtonBusy(false);
           document.getElementById("updated").textContent = `读取失败：${error}`;
         }
       }
@@ -393,11 +449,41 @@
     function bindVersionFilter() {
       document.getElementById("versionFilter").addEventListener("change", (event) => {
         versionFilterTouched = true;
-        renderSelectedVersion(event.target.value);
+      });
+      document.getElementById("versionFilter").addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          renderSelectedVersion(event.currentTarget.value);
+        }
+      });
+      document.getElementById("applyVersion").addEventListener("click", () => {
+        renderSelectedVersion(document.getElementById("versionFilter").value);
       });
     }
 
+    function setApplyButtonBusy(isBusy) {
+      const button = document.getElementById("applyVersion");
+      button.disabled = isBusy;
+      button.textContent = isBusy ? "读取中..." : "应用选择";
+    }
+
+    function localizePreRenderedTimestamp() {
+      const updated = document.getElementById("updated");
+      const generatedAtUtc = updated.dataset.generatedAtUtc;
+      if (generatedAtUtc) {
+        renderUpdatedAt(generatedAtUtc);
+      }
+    }
+
+    function setLoadingStatus() {
+      const updated = document.getElementById("updated");
+      const current = updated.textContent.trim();
+      if (!current || current === "正在读取数据..." || current.startsWith("读取失败")) {
+        updated.textContent = "正在读取数据...";
+      }
+    }
+
     async function init() {
+      localizePreRenderedTimestamp();
       bindVersionFilter();
       try {
         const [latestInfo, allSummary] = await Promise.all([

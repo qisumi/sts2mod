@@ -38,8 +38,8 @@ public sealed class MadScientistRune : HextechRelicBase
 {
 	protected override IEnumerable<DynamicVar> CanonicalVars =>
 	[
-		new DynamicVar("OrbSlots", 5m),
-		new DynamicVar("OrbCount", 5m)
+		new DynamicVar("OrbSlots", 3m),
+		new DynamicVar("OrbCount", 3m)
 	];
 
 	protected override IEnumerable<IHoverTip> ExtraHoverTips =>
@@ -59,14 +59,21 @@ public sealed class MadScientistRune : HextechRelicBase
 
 	public override async Task AfterSideTurnStart(CombatSide side, HextechCombatState combatState)
 	{
-		if (Owner == null || side != Owner.Creature.Side || combatState.RoundNumber > 1)
+		if (Owner == null || side != Owner.Creature.Side)
+		{
+			return;
+		}
+
+		int orbSlots = Math.Max(0, DynamicVars["OrbSlots"].IntValue);
+		int orbCount = Math.Max(0, DynamicVars["OrbCount"].IntValue);
+		if (orbSlots <= 0 && orbCount <= 0)
 		{
 			return;
 		}
 
 		Flash();
-		await OrbCmd.AddSlots(Owner, DynamicVars["OrbSlots"].IntValue);
-		for (int i = 0; i < DynamicVars["OrbCount"].IntValue; i++)
+		await OrbCmd.AddSlots(Owner, orbSlots);
+		for (int i = 0; i < orbCount; i++)
 		{
 			OrbModel orb = HextechStableRandom.CreateOrb(
 				(RunState)Owner.RunState,

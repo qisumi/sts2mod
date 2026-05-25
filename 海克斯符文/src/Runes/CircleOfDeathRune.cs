@@ -38,7 +38,11 @@ public sealed class CircleOfDeathRune : HextechRelicBase
 {
 	public Task HandleSustainGained(decimal amount)
 	{
-		if (Owner == null || Owner.Creature.IsDead || Owner.Creature.CombatState == null || amount <= 0m)
+		if (Owner == null ||
+			Owner.Creature.IsDead ||
+			Owner.Creature.CombatState == null ||
+			!CombatManager.Instance.IsInProgress ||
+			amount <= 0m)
 		{
 			return Task.CompletedTask;
 		}

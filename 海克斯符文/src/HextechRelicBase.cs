@@ -40,6 +40,48 @@ public abstract class HextechRelicBase : RelicModel
 	private HextechCombatState? _turnScopedCombatState;
 	private int _turnScopedRoundNumber = -1;
 
+#if STS2_106_OR_NEWER
+	public virtual Task BeforeSideTurnStart(PlayerChoiceContext choiceContext, CombatSide side, HextechCombatState combatState)
+	{
+		return Task.CompletedTask;
+	}
+
+	public sealed override Task BeforeSideTurnStart(PlayerChoiceContext choiceContext, CombatSide side, IReadOnlyList<Creature> participants, HextechCombatState combatState)
+	{
+		return BeforeSideTurnStart(choiceContext, side, combatState);
+	}
+
+	public virtual Task AfterSideTurnStart(CombatSide side, HextechCombatState combatState)
+	{
+		return Task.CompletedTask;
+	}
+
+	public sealed override Task AfterSideTurnStart(CombatSide side, IReadOnlyList<Creature> participants, HextechCombatState combatState)
+	{
+		return AfterSideTurnStart(side, combatState);
+	}
+
+	public virtual Task BeforeTurnEnd(PlayerChoiceContext choiceContext, CombatSide side)
+	{
+		return Task.CompletedTask;
+	}
+
+	public sealed override Task BeforeSideTurnEnd(PlayerChoiceContext choiceContext, CombatSide side, IEnumerable<Creature> participants)
+	{
+		return BeforeTurnEnd(choiceContext, side);
+	}
+
+	public virtual Task AfterTurnEnd(PlayerChoiceContext choiceContext, CombatSide side)
+	{
+		return Task.CompletedTask;
+	}
+
+	public sealed override Task AfterSideTurnEnd(PlayerChoiceContext choiceContext, CombatSide side, IEnumerable<Creature> participants)
+	{
+		return AfterTurnEnd(choiceContext, side);
+	}
+#endif
+
 	public sealed override RelicRarity Rarity => RelicRarity.Starter;
 
 	public override string PackedIconPath => GetResolvedIconPath();

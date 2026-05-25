@@ -20,6 +20,10 @@
     <DefineConstants>$(DefineConstants);STS2_104_OR_NEWER;STS2_105_OR_NEWER</DefineConstants>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(HextechSts2Target)' == '0.106.1'">
+    <DefineConstants>$(DefineConstants);STS2_104_OR_NEWER;STS2_105_OR_NEWER;STS2_106_OR_NEWER</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <Reference Include="sts2">
       <HintPath>$(GameDataDir)/sts2.dll</HintPath>

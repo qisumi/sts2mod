@@ -19,6 +19,7 @@ internal sealed partial class HextechMayhemModifier
 		RefreshPlayerAttackCostDoublingPreviews(players);
 
 		await ApplyToCurrentEnemiesIfNeeded();
+		await ApplyDelayedEnemyHealingBlocks(combatState);
 		HextechEnemyHexContext context = new(this);
 		foreach (HextechEnemyHexEffect effect in HextechEnemyHexEffects.GetActive(this))
 		{

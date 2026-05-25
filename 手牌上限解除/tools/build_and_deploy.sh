@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="/Users/iniad/sts2-mods/RemoveHandLimit"
 FILE_STEM="RemoveHandLimit"
 MANIFEST_SRC="$ROOT/assets/$FILE_STEM.json"
 GAME_APP="/Users/iniad/Library/Application Support/Steam/steamapps/common/Slay the Spire 2/SlayTheSpire2.app"
@@ -28,7 +28,7 @@ cp "$MANIFEST_SRC" "$ROOT/dist/$FILE_STEM.json"
 for dll in "$BUILD_OUT"/*.dll; do
   base_name="$(basename "$dll")"
   case "$base_name" in
-    sts2.dll|GodotSharp.dll)
+    sts2.dll|GodotSharp.dll|0Harmony.dll)
       continue
       ;;
   esac

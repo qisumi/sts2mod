@@ -20,6 +20,7 @@ internal sealed partial class HextechMayhemCombatTrackingState
 	public readonly HashSet<uint> DawnTriggered = new();
 	public readonly HashSet<uint> NearDeathFeastTriggered = new();
 	public readonly HashSet<uint> SpeedDemonPending = new();
+	public readonly Dictionary<uint, int> DelayedEnemyHealingBlock = new();
 	public readonly HashSet<uint> DevilsDanceTriggeredThisTurn = new();
 	public readonly HashSet<uint> FinalFormTriggeredThisTurn = new();
 	public readonly HashSet<uint> FeelTheBurnTriggered = new();
@@ -37,6 +38,7 @@ internal sealed partial class HextechMayhemCombatTrackingState
 	public readonly HashSet<uint> DoormakerRealStartApplied = new();
 	public readonly Dictionary<uint, int> TestSubjectPhaseStartApplied = new();
 	public readonly Dictionary<uint, int> TankEngineStacks = new();
+	public readonly Dictionary<uint, int> TankEngineLastAppliedRound = new();
 	public readonly Dictionary<uint, int> ShrinkEngineStacks = new();
 	public readonly Dictionary<uint, int> GetExcitedPending = new();
 	public readonly HashSet<uint> FeelTheBurnPending = new();

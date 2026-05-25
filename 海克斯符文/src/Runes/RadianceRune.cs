@@ -27,7 +27,7 @@ public sealed class RadianceRune : HextechRelicBase
 	protected override IEnumerable<DynamicVar> CanonicalVars =>
 	[
 		new DynamicVar("MaxHpDamagePercent", 0.05m),
-		new HealVar(1m)
+		new HealVar(2m)
 	];
 
 	public override Task BeforeCombatStart()

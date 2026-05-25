@@ -61,7 +61,7 @@ public sealed class MindOverMatterRune : HextechRelicBase
 			CountOwnedCardsDrawnFromHistory().ToString());
 		CardModel card = combatState.CreateCard(canonicalCard, Owner);
 		card.AddKeyword(CardKeyword.Ethereal);
-		card.SetToFreeThisTurn();
+		card.SetToFreeThisCombat();
 
 		Flash();
 		await HextechCardGeneration.AddGeneratedCardToCombat(card, PileType.Hand, addedByPlayer: true);

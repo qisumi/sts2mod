@@ -72,7 +72,7 @@ public sealed class SacrificeRune : HextechRelicBase
 	{
 		if (Owner != null && _countThisCombat > 0)
 		{
-			room.AddExtraReward(Owner, new GoldReward(_countThisCombat, Owner));
+			HextechGoldRewardHelper.AddFixedExtraGoldReward(room, Owner, _countThisCombat);
 		}
 
 		_countThisCombat = 0;

@@ -11,6 +11,10 @@ ZIP_PATH="${1:-$DIST_DIR/$FILE_STEM.zip}"
 EXPECTED_ENTRIES_FILE=""
 ACTUAL_ENTRIES_FILE=""
 
+if [[ "$ZIP_PATH" != /* ]]; then
+  ZIP_PATH="$(pwd)/$ZIP_PATH"
+fi
+
 cleanup_temp_files() {
   [[ -z "$EXPECTED_ENTRIES_FILE" || ! -f "$EXPECTED_ENTRIES_FILE" ]] || rm -f "$EXPECTED_ENTRIES_FILE"
   [[ -z "$ACTUAL_ENTRIES_FILE" || ! -f "$ACTUAL_ENTRIES_FILE" ]] || rm -f "$ACTUAL_ENTRIES_FILE"
