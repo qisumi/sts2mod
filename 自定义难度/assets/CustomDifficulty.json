@@ -1,0 +1,10 @@
+{
+  "id": "CustomDifficulty",
+  "name": "自定义难度",
+  "author": "Natsuki",
+  "description": "Adds host-controlled character select sliders for monster HP and attack multipliers.",
+  "version": "0.1.0",
+  "has_pck": true,
+  "has_dll": true,
+  "affects_gameplay": true
+}

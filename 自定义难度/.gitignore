@@ -1,0 +1,7 @@
+src/bin/
+src/obj/
+dist/
+releases/
+.DS_Store
+._*
+__MACOSX/
