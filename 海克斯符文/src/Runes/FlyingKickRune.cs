@@ -67,9 +67,19 @@ public sealed class FlyingKickRune : HextechRelicBase
 			|| Owner == null
 			|| Owner.Creature.IsDead
 			|| target.Side != CombatSide.Enemy
-			|| !target.IsAlive
 			|| result.UnblockedDamage <= 0m
 			|| !IsDamageFromOwner(dealer, cardSource))
+		{
+			return;
+		}
+
+		if (result.WasTargetKilled)
+		{
+			await TriggerFlyingKick(choiceContext, target, killTarget: false);
+			return;
+		}
+
+		if (!target.IsAlive)
 		{
 			return;
 		}
@@ -81,16 +91,37 @@ public sealed class FlyingKickRune : HextechRelicBase
 			return;
 		}
 
+		await TriggerFlyingKick(choiceContext, target, killTarget: true);
+	}
+
+	private async Task TriggerFlyingKick(PlayerChoiceContext choiceContext, Creature target, bool killTarget)
+	{
+		if (_executing || Owner == null || Owner.Creature.IsDead)
+		{
+			return;
+		}
+
 		_executing = true;
 		try
 		{
 			Flash([target]);
-			FlyingKickCorpseLaunchDriver.MarkPending(target);
-			await CreatureCmd.Kill(target);
+			if (killTarget)
+			{
+				FlyingKickCorpseLaunchDriver.MarkPending(target);
+				await CreatureCmd.Kill(target);
+			}
+			else if (HextechMonsterInteractionPolicy.IsTrueCombatDeath(target))
+			{
+				FlyingKickCorpseLaunchDriver.MarkPendingUntilConsumed(target);
+			}
 		}
 		finally
 		{
-			FlyingKickCorpseLaunchDriver.ClearPending(target);
+			if (killTarget)
+			{
+				FlyingKickCorpseLaunchDriver.ClearPending(target);
+			}
+
 			_executing = false;
 		}
 

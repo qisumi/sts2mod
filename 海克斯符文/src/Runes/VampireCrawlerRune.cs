@@ -5,36 +5,35 @@ namespace HextechRunes;
 
 public sealed class VampireCrawlerRune : HextechRelicBase
 {
-	private bool _movedPowerLastPlay;
-
-	public override (PileType, CardPilePosition) ModifyCardPlayResultPileTypeAndPosition(
-		CardModel card,
-		bool isAutoPlay,
-		ResourceInfo resources,
-		PileType pileType,
-		CardPilePosition position)
+	public override async Task AfterCardPlayed(PlayerChoiceContext context, CardPlay cardPlay)
 	{
-		_movedPowerLastPlay = false;
-		if (card.Owner == Owner
-			&& !card.IsDupe
-			&& card.Type == CardType.Power
-			&& pileType == PileType.None)
+		if (!ShouldCopyPlayedPowerToDiscard(cardPlay)
+			|| Owner?.Creature.CombatState is not HextechCombatState combatState)
 		{
-			_movedPowerLastPlay = true;
-			return (PileType.Discard, position);
+			return;
 		}
 
-		return (pileType, position);
+		CardModel copy = combatState.CloneCard(cardPlay.Card);
+		await HextechCardGeneration.AddGeneratedCardToCombat(
+			copy,
+			PileType.Discard,
+			addedByPlayer: true,
+			CardPilePosition.Bottom,
+			previewNonHandAdds: false);
+		Flash();
 	}
 
-	public override Task AfterModifyingCardPlayResultPileOrPosition(CardModel card, PileType pileType, CardPilePosition position)
+	private bool ShouldCopyPlayedPowerToDiscard(CardPlay cardPlay)
 	{
-		if (_movedPowerLastPlay && card.Owner == Owner)
-		{
-			Flash();
-		}
-
-		_movedPowerLastPlay = false;
-		return Task.CompletedTask;
+		CardModel card = cardPlay.Card;
+		return Owner != null
+			&& CombatManager.Instance.IsInProgress
+			&& !CombatManager.Instance.IsOverOrEnding
+			&& card.Owner == Owner
+			&& !card.IsDupe
+			&& card.Type == CardType.Power
+			&& card.Pile?.Type == PileType.Play
+			&& cardPlay.ResultPile == PileType.None
+			&& cardPlay.PlayIndex + 1 >= Math.Max(1, cardPlay.PlayCount);
 	}
 }

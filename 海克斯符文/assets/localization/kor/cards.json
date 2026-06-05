@@ -86,5 +86,7 @@
   "ostyWishCard.flavor": "이번에는 오스티가 결말을 당신의 손에 맡깁니다.",
   "OSTY_WISH_CARD.flavor": "이번에는 오스티가 결말을 당신의 손에 맡깁니다.",
   "survivorUpgradeRune.selectionScreenPrompt": "버릴 카드를 원하는 만큼 선택하세요.",
-  "SURVIVOR_UPGRADE_RUNE.selectionScreenPrompt": "버릴 카드를 원하는 만큼 선택하세요."
+  "SURVIVOR_UPGRADE_RUNE.selectionScreenPrompt": "버릴 카드를 원하는 만큼 선택하세요.",
+  "colorDiscoveryRune.selectionScreenPrompt": "손에 넣을 카드 1장을 선택하세요.",
+  "COLOR_DISCOVERY_RUNE.selectionScreenPrompt": "손에 넣을 카드 1장을 선택하세요."
 }

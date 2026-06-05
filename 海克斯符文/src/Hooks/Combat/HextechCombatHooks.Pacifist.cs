@@ -71,6 +71,7 @@ internal static partial class HextechCombatHooks
 		{
 			PopActualDamageCommand(commandId);
 			PacifistRune.ClearPendingDoomApplications(commandId);
+			CompensationRune.ClearPendingCompensations(commandId);
 		}
 	}
 

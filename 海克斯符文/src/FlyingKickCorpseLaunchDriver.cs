@@ -38,6 +38,12 @@ internal sealed class FlyingKickCorpseLaunchDriver
 		PendingCreatureRefs.Add(creature);
 	}
 
+	internal static void MarkPendingUntilConsumed(Creature creature)
+	{
+		MarkPending(creature);
+		TaskHelper.RunSafely(ClearPendingAfterDelay(creature));
+	}
+
 	internal static bool TryConsumePending(Creature? creature)
 	{
 		if (creature == null)
@@ -61,6 +67,12 @@ internal sealed class FlyingKickCorpseLaunchDriver
 		}
 
 		PendingCreatureRefs.Remove(creature);
+	}
+
+	private static async Task ClearPendingAfterDelay(Creature creature)
+	{
+		await Task.Delay(TimeSpan.FromSeconds(3));
+		ClearPending(creature);
 	}
 
 	internal static void TryAttach(NCreature creature)

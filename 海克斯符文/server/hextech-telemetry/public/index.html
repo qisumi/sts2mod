@@ -8,27 +8,47 @@
     :root {
       color-scheme: light dark;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #f5f6f3;
-      color: #1e2528;
+      background: #eef2f0;
+      color: #182124;
+      --bg: #eef2f0;
+      --panel: #ffffff;
+      --panel-soft: #f7faf8;
+      --text: #182124;
+      --muted: #657275;
+      --line: #d7dfdc;
+      --line-strong: #bfcac6;
+      --accent: #7c3aed;
+      --accent-soft: #efe8ff;
+      --accent-text: #4c1d95;
+      --shadow: 0 10px 26px rgba(24, 33, 36, 0.08);
     }
     body {
       margin: 0;
-      padding: 28px;
+      padding: 30px;
+      background: var(--bg);
     }
     main {
       max-width: 1280px;
       margin: 0 auto;
     }
+    .dashboard-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 24px;
+      margin-bottom: 18px;
+    }
     h1 {
       margin: 0 0 6px;
-      font-size: 28px;
+      font-size: 30px;
+      letter-spacing: 0;
     }
     h2 {
-      margin: 28px 0 10px;
+      margin: 0 0 12px;
       font-size: 18px;
     }
     .muted {
-      color: #647175;
+      color: var(--muted);
       margin-bottom: 18px;
       line-height: 1.55;
     }
@@ -39,40 +59,51 @@
       margin: 18px 0 18px;
     }
     .stat {
-      border: 1px solid #d7ddd8;
+      border: 1px solid var(--line);
       border-radius: 8px;
       padding: 14px;
-      background: #ffffff;
+      background: var(--panel);
+      box-shadow: var(--shadow);
     }
     .stat b {
       display: block;
       font-size: 24px;
       margin-bottom: 4px;
       font-variant-numeric: tabular-nums;
+      color: var(--accent-text);
     }
     .links {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
-      margin: 12px 0 4px;
+      margin: 12px 0 20px;
     }
     .links a {
       display: inline-flex;
       align-items: center;
-      border: 1px solid #c8d0cc;
+      border: 1px solid var(--line);
       border-radius: 6px;
       padding: 7px 10px;
       color: inherit;
-      background: #ffffff;
+      background: var(--panel);
       text-decoration: none;
       font-size: 14px;
+    }
+    .links a:hover {
+      border-color: var(--accent);
+      color: var(--accent-text);
     }
     .controls {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       gap: 10px;
-      margin: 14px 0 6px;
+      margin: 0;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
     }
     .controls label {
       font-size: 14px;
@@ -81,10 +112,10 @@
     .controls select,
     .controls button {
       min-width: 180px;
-      border: 1px solid #c8d0cc;
+      border: 1px solid var(--line-strong);
       border-radius: 6px;
       padding: 7px 10px;
-      background: #ffffff;
+      background: var(--panel-soft);
       color: inherit;
       font: inherit;
       font-size: 14px;
@@ -93,6 +124,9 @@
       min-width: 96px;
       cursor: pointer;
       font-weight: 650;
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #ffffff;
     }
     .controls button:disabled {
       cursor: wait;
@@ -102,18 +136,80 @@
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
       gap: 18px;
+      margin-bottom: 18px;
+    }
+    .grid section,
+    .table-panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    .grid section {
+      padding: 16px;
+    }
+    .table-panel {
+      margin-top: 18px;
+      overflow: hidden;
+    }
+    .table-panel > summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 16px 18px;
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
+    }
+    .table-panel > summary::-webkit-details-marker {
+      display: none;
+    }
+    .panel-title {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-right: 10px;
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .panel-meta {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 6px;
+      padding: 3px 8px;
+      background: var(--accent-soft);
+      color: var(--accent-text);
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .summary-chevron {
+      display: inline-flex;
+      width: 28px;
+      height: 28px;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--muted);
+      transition: transform 160ms ease;
+    }
+    .table-panel[open] .summary-chevron {
+      transform: rotate(180deg);
+    }
+    .table-shell {
+      overflow-x: auto;
+      border-top: 1px solid var(--line);
     }
     table {
       width: 100%;
       border-collapse: collapse;
-      background: #ffffff;
-      border: 1px solid #d7ddd8;
-      border-radius: 8px;
+      background: var(--panel);
       overflow: hidden;
     }
     th, td {
       padding: 8px 10px;
-      border-bottom: 1px solid #e5e9e5;
+      border-bottom: 1px solid var(--line);
       text-align: right;
       font-size: 13px;
       white-space: nowrap;
@@ -125,50 +221,78 @@
       overflow-wrap: anywhere;
     }
     th {
-      background: #edf1ee;
+      position: sticky;
+      top: 0;
+      background: var(--panel-soft);
       font-weight: 650;
     }
     tr:last-child td {
       border-bottom: 0;
     }
     .empty {
-      border: 1px solid #d7ddd8;
+      border: 1px solid var(--line);
       border-radius: 8px;
-      background: #ffffff;
+      background: var(--panel);
       padding: 16px;
-      color: #647175;
+      color: var(--muted);
+    }
+    @media (max-width: 720px) {
+      body {
+        padding: 18px;
+      }
+      .dashboard-header {
+        display: block;
+      }
+      .controls {
+        margin-top: 14px;
+      }
+      .controls select,
+      .controls button {
+        flex: 1 1 160px;
+        min-width: 0;
+      }
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        background: #111719;
-        color: #e7ece8;
+        background: #101719;
+        color: #e7ece9;
+        --bg: #101719;
+        --panel: #182023;
+        --panel-soft: #202a2d;
+        --text: #e7ece9;
+        --muted: #9caaa7;
+        --line: #2c3839;
+        --line-strong: #3a4849;
+        --accent: #a78bfa;
+        --accent-soft: #2c2440;
+        --accent-text: #ddd6fe;
+        --shadow: none;
       }
-      .muted, .empty {
-        color: #9aa8a5;
+      .controls button {
+        background: #7c3aed;
+        border-color: #7c3aed;
+        color: #ffffff;
       }
-      .stat, table, .links a, .empty, .controls select, .controls button {
-        background: #182023;
-        border-color: #2b3637;
-      }
-      th {
-        background: #202b2d;
-      }
-      th, td {
-        border-bottom-color: #2b3637;
+      .stat b {
+        color: var(--accent-text);
       }
     }
   </style>
 </head>
 <body>
   <main>
-    <h1>海克斯符文统计</h1>
-    <div class="muted" id="updated" data-generated-at-utc="">正在读取数据...</div>
-    <div class="controls">
-      <label for="versionFilter">统计版本</label>
-      <select id="versionFilter">
-        <option value="all">全部版本</option>
-      </select>
-      <button id="applyVersion" type="button">应用选择</button>
+    <div class="dashboard-header">
+      <div>
+        <h1>海克斯符文统计</h1>
+        <div class="muted" id="updated" data-generated-at-utc="">正在读取数据...</div>
+      </div>
+      <div class="controls">
+        <label for="versionFilter">统计版本</label>
+        <select id="versionFilter">
+          <option value="all">全部版本</option>
+        </select>
+        <button id="applyVersion" type="button">应用选择</button>
+      </div>
     </div>
     <div class="stats">
       <div class="stat"><b id="eligibleRuns">0</b>纳入胜率的局数</div>
@@ -202,16 +326,32 @@
     </div>
 
     <section>
-      <h2>我方海克斯选择率</h2>
-      <table id="choices"></table>
+      <details class="table-panel" id="choicesPanel">
+        <summary>
+          <span>
+            <span class="panel-title">我方海克斯选择率</span>
+            <span class="panel-meta" id="choicesMeta">0 条</span>
+          </span>
+          <span class="summary-chevron" aria-hidden="true">⌄</span>
+        </summary>
+        <div class="table-shell">
+          <table id="choices"></table>
+        </div>
+      </details>
     </section>
     <section>
-      <h2>我方海克斯持有胜率</h2>
-      <table id="playerRunes"></table>
-    </section>
-    <section>
-      <h2>敌方海克斯胜率</h2>
-      <table id="monsterHexes"></table>
+      <details class="table-panel" id="monsterHexesPanel">
+        <summary>
+          <span>
+            <span class="panel-title">敌方海克斯胜率</span>
+            <span class="panel-meta" id="monsterHexesMeta">0 条</span>
+          </span>
+          <span class="summary-chevron" aria-hidden="true">⌄</span>
+        </summary>
+        <div class="table-shell">
+          <table id="monsterHexes"></table>
+        </div>
+      </details>
     </section>
   </main>
   <script>
@@ -252,6 +392,13 @@
         `<thead><tr>${headers.map((h) => `<th>${text(h)}</th>`).join("")}</tr></thead>`,
         `<tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${text(cell)}</td>`).join("")}</tr>`).join("")}</tbody>`
       ].join("");
+    }
+
+    function renderPanelCount(id, rows) {
+      const node = document.getElementById(id);
+      if (node) {
+        node.textContent = `${Array.isArray(rows) ? rows.length : 0} 条`;
+      }
     }
 
     function summaryUrl(version) {
@@ -386,10 +533,12 @@
         ["角色", "玩家样本"],
         limitRows(summary.tables.characters, 20).map((row) => [displayLabel(row), row.count])
       );
+      const playerRuneChoices = Array.isArray(summary.tables.playerRuneChoices) ? summary.tables.playerRuneChoices : [];
+      renderPanelCount("choicesMeta", playerRuneChoices);
       renderTable(
         document.getElementById("choices"),
         ["海克斯", "出现", "选择", "选择率", "选择后胜率"],
-        limitRows(summary.tables.playerRuneChoices).map((row) => [
+        playerRuneChoices.map((row) => [
           displayLabel(row),
           row.offered,
           row.selected,
@@ -397,15 +546,12 @@
           fmtPct(row.selectedWinRate)
         ])
       );
-      renderTable(
-        document.getElementById("playerRunes"),
-        ["海克斯", "持有局数", "胜利", "玩家胜率"],
-        limitRows(summary.tables.playerRuneRuns).map((row) => [displayLabel(row), row.runs, row.wins, fmtPct(row.winRate)])
-      );
+      const monsterHexRuns = Array.isArray(summary.tables.monsterHexRuns) ? summary.tables.monsterHexRuns : [];
+      renderPanelCount("monsterHexesMeta", monsterHexRuns);
       renderTable(
         document.getElementById("monsterHexes"),
         ["敌方海克斯", "出现局数", "敌方胜利", "敌方胜率", "玩家胜率"],
-        limitRows(summary.tables.monsterHexRuns).map((row) => [
+        monsterHexRuns.map((row) => [
           displayLabel(row),
           row.runs,
           row.monsterWins,

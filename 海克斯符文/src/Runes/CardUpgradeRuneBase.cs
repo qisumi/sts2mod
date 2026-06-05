@@ -14,7 +14,12 @@ public abstract class CardUpgradeRuneBase<TCard> : HextechRelicBase
 
 	public sealed override bool IsAvailableForPlayer(Player player)
 	{
-		return IsAvailableForCharacter(player) && DeckContains<TCard>(player);
+		return IsAvailableForCharacter(player) && DeckContainsRequiredCard(player);
+	}
+
+	protected virtual bool DeckContainsRequiredCard(Player player)
+	{
+		return DeckContains<TCard>(player);
 	}
 
 	protected abstract bool IsAvailableForCharacter(Player player);

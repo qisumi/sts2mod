@@ -1314,9 +1314,10 @@ function renderIndexHtml(versionFilter = null) {
     [/<table id="versions"><\/table>/, `<table id="versions">${renderTable(["版本", "局数"], summary.tables.versions.slice(0, 20).map((row) => [displayLabel(row), row.count]))}</table>`],
     [/<table id="netModes"><\/table>/, `<table id="netModes">${renderTable(["模式", "局数"], summary.tables.netModes.slice(0, 20).map((row) => [displayLabel(row), row.count]))}</table>`],
     [/<table id="characters"><\/table>/, `<table id="characters">${renderTable(["角色", "玩家样本"], summary.tables.characters.slice(0, 20).map((row) => [displayLabel(row), row.count]))}</table>`],
-    [/<table id="choices"><\/table>/, `<table id="choices">${renderTable(["海克斯", "出现", "选择", "选择率", "选择后胜率"], summary.tables.playerRuneChoices.slice(0, 80).map((row) => [displayLabel(row), row.offered, row.selected, fmtPct(row.pickRate), fmtPct(row.selectedWinRate)]))}</table>`],
-    [/<table id="playerRunes"><\/table>/, `<table id="playerRunes">${renderTable(["海克斯", "持有局数", "胜利", "玩家胜率"], summary.tables.playerRuneRuns.slice(0, 80).map((row) => [displayLabel(row), row.runs, row.wins, fmtPct(row.winRate)]))}</table>`],
-    [/<table id="monsterHexes"><\/table>/, `<table id="monsterHexes">${renderTable(["敌方海克斯", "出现局数", "敌方胜利", "敌方胜率", "玩家胜率"], summary.tables.monsterHexRuns.slice(0, 80).map((row) => [displayLabel(row), row.runs, row.monsterWins, fmtPct(row.monsterWinRate), fmtPct(row.playerWinRate)]))}</table>`]
+    [/<span class="panel-meta" id="choicesMeta">0 条<\/span>/, `<span class="panel-meta" id="choicesMeta">${summary.tables.playerRuneChoices.length} 条</span>`],
+    [/<span class="panel-meta" id="monsterHexesMeta">0 条<\/span>/, `<span class="panel-meta" id="monsterHexesMeta">${summary.tables.monsterHexRuns.length} 条</span>`],
+    [/<table id="choices"><\/table>/, `<table id="choices">${renderTable(["海克斯", "出现", "选择", "选择率", "选择后胜率"], summary.tables.playerRuneChoices.map((row) => [displayLabel(row), row.offered, row.selected, fmtPct(row.pickRate), fmtPct(row.selectedWinRate)]))}</table>`],
+    [/<table id="monsterHexes"><\/table>/, `<table id="monsterHexes">${renderTable(["敌方海克斯", "出现局数", "敌方胜利", "敌方胜率", "玩家胜率"], summary.tables.monsterHexRuns.map((row) => [displayLabel(row), row.runs, row.monsterWins, fmtPct(row.monsterWinRate), fmtPct(row.playerWinRate)]))}</table>`]
   ];
   for (const [pattern, replacement] of replacements) {
     html = html.replace(pattern, replacement);

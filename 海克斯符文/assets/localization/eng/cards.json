@@ -86,5 +86,7 @@
   "ostyWishCard.flavor": "This time, Osty leaves the ending in your hands.",
   "OSTY_WISH_CARD.flavor": "This time, Osty leaves the ending in your hands.",
   "survivorUpgradeRune.selectionScreenPrompt": "Choose any number of cards to discard.",
-  "SURVIVOR_UPGRADE_RUNE.selectionScreenPrompt": "Choose any number of cards to discard."
+  "SURVIVOR_UPGRADE_RUNE.selectionScreenPrompt": "Choose any number of cards to discard.",
+  "colorDiscoveryRune.selectionScreenPrompt": "Choose 1 card to add to your hand.",
+  "COLOR_DISCOVERY_RUNE.selectionScreenPrompt": "Choose 1 card to add to your hand."
 }

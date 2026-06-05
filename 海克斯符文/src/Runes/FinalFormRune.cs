@@ -53,8 +53,13 @@ public sealed class FinalFormRune : HextechRelicBase
 	protected override IEnumerable<DynamicVar> CanonicalVars =>
 	[
 		new DynamicVar("MinCost", 2m),
-		new DynamicVar("BlockPercent", 0.2m),
+		new DynamicVar("PlatingPercent", 0.10m),
 		new CardsVar(2)
+	];
+
+	protected override IEnumerable<IHoverTip> ExtraHoverTips =>
+	[
+		HoverTipFactory.FromPower<PlatingPower>()
 	];
 
 	public override Task BeforeCombatStart()
@@ -92,9 +97,9 @@ public sealed class FinalFormRune : HextechRelicBase
 			return;
 		}
 
-		int block = Math.Max(1, FloorToInt(Owner.Creature.MaxHp * DynamicVars["BlockPercent"].BaseValue));
+		int plating = Math.Max(1, FloorToInt(Owner.Creature.MaxHp * DynamicVars["PlatingPercent"].BaseValue));
 		Flash();
-		await CreatureCmd.GainBlock(Owner.Creature, block, ValueProp.Unpowered, cardPlay, fast: false);
+		await PowerCmd.Apply<PlatingPower>(Owner.Creature, plating, Owner.Creature, cardPlay.Card);
 		await CardPileCmd.Draw(context, DynamicVars.Cards.BaseValue, Owner, fromHandDraw: false);
 	}
 

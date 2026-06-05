@@ -24,11 +24,18 @@ internal sealed class DuffsVintageEnemyHex : HextechEnemyHexEffect
 				continue;
 			}
 
+			int maxAffectedCost = context.TierValue(Kind, 1, 2, 3);
 			foreach (CardModel card in PileType.Hand.GetPile(player).Cards)
 			{
-				if (!card.EnergyCost.CostsX)
+				if (card.EnergyCost.CostsX)
 				{
-					card.EnergyCost.SetUntilPlayed(card.EnergyCost.GetAmountToSpend() + 1, reduceOnly: false);
+					continue;
+				}
+
+				int currentCost = card.EnergyCost.GetAmountToSpend();
+				if (currentCost <= maxAffectedCost)
+				{
+					card.EnergyCost.SetUntilPlayed(currentCost + 1, reduceOnly: false);
 				}
 			}
 		}
